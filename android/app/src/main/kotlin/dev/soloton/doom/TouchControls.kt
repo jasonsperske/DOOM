@@ -19,7 +19,8 @@ import kotlin.math.min
  * length (targets of 96 px or more), and scaled for other screens.
  *
  * **Ride mode** (the default while the level has a route, see ride.c): the bike moves the player.
- * - Hold a finger on a monster to target it and fire.
+ * - Hold a finger on a monster to target it and fire. Pedal power picks the weapon, so the weapon
+ *   buttons are hidden.
  * - GO (bottom left) stands in for pedalling when no bike is connected.
  * - FREE switches to the touch controls below; RIDE switches back.
  *
@@ -28,7 +29,8 @@ import kotlin.math.min
  * - Anywhere else: drag sideways to turn.
  * - FIRE and USE at the bottom right; dragging a finger on FIRE also turns.
  *
- * Always: MENU and MAP at the top left, weapons 1-7 down the right edge, bike readout on the left.
+ * Always: MENU and MAP at the top left, the bike readout on the left. Weapons 1-7 down the right
+ * edge except in ride mode.
  * In menus the stick sends arrow keys, FIRE becomes OK (Enter; also "yes" in prompts) and
  * USE becomes BACK.
  */
@@ -203,7 +205,7 @@ class TouchControls(context: Context) : View(context) {
 
     private fun visibleButtons(): List<Button> = when {
         menuMode -> listOf(fire, use, menu)
-        rideMode -> listOfNotNull(menu, map, ride, go.takeIf { !bikeStatus.live }) + weapons
+        rideMode -> listOfNotNull(menu, map, ride, go.takeIf { !bikeStatus.live })
         inLevel -> listOf(fire, use, menu, map, ride) + weapons
         else -> listOf(fire, use, menu, map) + weapons
     }
@@ -411,7 +413,10 @@ class TouchControls(context: Context) : View(context) {
             lines += "NO BIKE"
         }
         when {
-            riding -> lines += String.format(Locale.US, "POWER x%.1f", DoomNative.nativeFirepower())
+            riding -> {
+                lines += String.format(Locale.US, "POWER %.0f%%", DoomNative.nativePower() * 100f)
+                DoomNative.WEAPON_NAMES.getOrNull(DoomNative.nativeRideWeapon())?.let { lines += it }
+            }
             rideEnabled -> lines += "NO ROUTE"
         }
         val size = textPaint.textSize

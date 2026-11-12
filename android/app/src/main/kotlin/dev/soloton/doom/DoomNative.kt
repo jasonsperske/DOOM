@@ -45,8 +45,14 @@ object DoomNative {
     /** A finger on the game view, [u] and [v] 0..1 across it; held on a monster, it fires. */
     @JvmStatic external fun nativeRideTouch(down: Boolean, u: Float, v: Float)
 
-    /** Damage multiplier the bike currently gives. */
-    @JvmStatic external fun nativeFirepower(): Float
+    /** Pedal power, 0..1: pace scaled up by resistance. It picks the weapon in ride mode. */
+    @JvmStatic external fun nativePower(): Float
+
+    /** The weapon ride mode has chosen (DOOM's weapontype_t), or -1 outside ride mode. */
+    @JvmStatic external fun nativeRideWeapon(): Int
+
+    /** Names of DOOM's weapontype_t values, for the readout. */
+    val WEAPON_NAMES = listOf("FIST", "PISTOL", "SHOTGUN", "CHAINGUN", "ROCKETS", "PLASMA", "BFG", "CHAINSAW", "SUPER SG")
 
     fun tapKey(doomKey: Int) {
         nativeKey(doomKey, true)

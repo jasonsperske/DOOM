@@ -35,6 +35,9 @@ import java.io.File
  * The bike (via soloton's bike library) drives ride mode: its pace and resistance go to the engine
  * 20 times a second. Without a bike, the GO button stands in for pedalling.
  *
+ * For testing without a bike, GO's stand-in pace (m/s) and resistance (0..1) can be set:
+ * `--ef go_pace 4.5 --ef go_resistance 1`
+ *
  * Extra command-line arguments can be passed for testing:
  * `adb shell am start -n dev.soloton.doom/.DoomActivity --es args "-warp 1 1 -skill 3"`
  */
@@ -44,12 +47,14 @@ class DoomActivity : Activity(), DoomNative.Listener, SurfaceHolder.Callback {
     private var controls: TouchControls? = null
     private val bike by lazy { BikePaceSource(applicationContext) }
     private val handler = Handler(Looper.getMainLooper())
+    private val goPace by lazy { intent.getFloatExtra("go_pace", GO_PACE) }
+    private val goResistance by lazy { intent.getFloatExtra("go_resistance", GO_RESISTANCE) }
 
     private val feedBike = object : Runnable {
         override fun run() {
             val live = bike.isLive
-            val pace = if (live) bike.metersPerSecond else if (controls?.goHeld == true) GO_PACE else 0f
-            val resistance = if (live) bike.resistance.fraction else 0f
+            val pace = if (live) bike.metersPerSecond else if (controls?.goHeld == true) goPace else 0f
+            val resistance = if (live) bike.resistance.fraction else goResistance
             DoomNative.nativeSetBike(live, pace, resistance)
             controls?.bikeStatus = TouchControls.BikeStatus(live, bike.sensors.latest?.cadenceRpm ?: 0f, resistance)
             handler.postDelayed(this, BIKE_FEED_MS)
@@ -272,6 +277,9 @@ class DoomActivity : Activity(), DoomNative.Listener, SurfaceHolder.Callback {
 
         /** Pace while GO is held without a bike: about 70 rpm. */
         const val GO_PACE = 3.0f
+
+        /** Resistance assumed without a bike: halfway. */
+        const val GO_RESISTANCE = 0.5f
 
         /** The names linuxdoom-1.10's IdentifyVersion looks for. */
         val IWADS = listOf("doom2f.wad", "doom2.wad", "plutonia.wad", "tnt.wad", "doomu.wad", "doom.wad", "doom1.wad")

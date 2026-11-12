@@ -41,6 +41,12 @@ With no WAD, the app shows these instructions instead. To pass DOOM command-line
 adb shell am start -n dev.soloton.doom/.DoomActivity --es args "-warp 1 3 -skill 4"
 ```
 
+To test the higher weapons without a bike, set what GO stands in for (pace in m/s, resistance 0..1):
+
+```bash
+adb shell am start -n dev.soloton.doom/.DoomActivity --ef go_pace 4.5 --ef go_resistance 1
+```
+
 To test on soloton's gen 1 emulator, run `scripts/gen1-emulator.sh` in the soloton repo, then install as above.
 
 ## Ride mode
@@ -51,7 +57,13 @@ When a level starts, the game plans a route from the player to the exit, then th
 - **Doors open as you reach them,** locked or not. Lifts lower, and stairs and floors that a switch or trigger line would move are moved for you. The exit switch or line triggers when you arrive.
 - **You face the nearest monster you can see** and strafe, so you keep following the route while it is in your sights. With nothing in sight, you face along the route.
 - **Hold a finger on a monster to fire at it.** That also makes it your target until it dies or you let go.
-- **Firepower** multiplies the damage you deal, from 0.5x (barely pedalling) to 3x (fast, at high resistance): `0.5 + 2.5 x speed x (0.4 + 0.6 x resistance)`, where speed is pace over 4.5 m/s (about 105 rpm), capped at 1. Without a bike it is 1x. The left edge shows cadence, resistance and firepower.
+- **Pedal power picks your weapon.** Power runs from 0 to 100%: `speed x (0.4 + 0.6 x resistance)`, where speed is pace over 4.5 m/s (about 105 rpm), capped at 1.
+  - Power is split evenly across the game's weapons, weakest first: pistol, shotgun, super shotgun (DOOM II), chaingun, rocket launcher, then plasma rifle and BFG (not in shareware). In shareware, under 25% is the pistol and 75% or more is rockets.
+  - You get the weapon whether or not you have picked it up. Stop pedalling and you're down to the pistol.
+  - Without a bike, GO counts as 3 m/s at half resistance: 47%, the shotgun.
+  - The left edge shows cadence, resistance, power and the weapon.
+- **Rockets only when they can't hurt you.** The launcher is used, and fires, only at a target at least 256 units away with no monster within 192 units of you. Otherwise the next weapon down is used, and rockets come back once there is 64 units more room.
+- **Ammo is unlimited** for every weapon, in ride and free mode.
 - **Boss levels** end when the bosses die, not at an exit: E1M8 (two Barons of Hell) and the other episode finales. These play differently:
   - The route leads to the bosses.
   - Once you can see one, you circle the nearest at 320–640 units, in whichever direction is clear. You sidestep any shot that would pass within 80 units in the next 40 tics.
@@ -75,7 +87,7 @@ adb shell am start -n dev.soloton.doom/dev.soloton.bike.BikeDiagnosticsActivity
 
 ## Controls
 
-In free mode (or ride mode's MENU, MAP and weapons):
+In free mode (or ride mode's MENU and MAP; weapons are picked by pedal power there):
 
 | Control | In the game | In menus |
 |---|---|---|
@@ -102,7 +114,7 @@ Leaving the app pauses the game and opens the menu, so you never come back mid-f
 | `i_music_android.c` | Music: converts each song's MUS lump to a standard MIDI file (MIDI lumps from PWADs pass through) in the app's files folder; `MusicPlayer.kt` plays it, looping, with Android's built-in MIDI synthesiser (`MediaPlayer`). It follows the menu's music volume and pauses with the game and when the app is in the background |
 | `i_system_android.c` | Timer that ignores time spent paused, 32 MB zone heap, `I_Error`/`I_Quit` call back to Kotlin |
 | `i_net_android.c` | Single player only |
-| `ride.c` | Ride mode: route planning, steering, targeting, doors and lifts, firepower |
+| `ride.c` | Ride mode: route planning, steering, targeting, doors and lifts, weapon choice, unlimited ammo |
 
 Changes to the engine sources in `linuxdoom-1.10/`:
 
@@ -110,7 +122,7 @@ Changes to the engine sources in `linuxdoom-1.10/`:
 - **ARM:** built with `-fsigned-char`, because `ticcmd_t`'s movement fields are plain `char`.
 - **Bionic:** no `<values.h>`; `boolean` coexists with `<stdbool.h>`.
 - **Touch (`__ANDROID__` only):** Enter answers "yes" in prompts, an empty save slot gets a default name, the tic loop sleeps instead of spinning, and 8 sound channels by default.
-- **Ride mode (`__ANDROID__` only):** `G_BuildTiccmd` hands the ticcmd to `RIDE_BuildTiccmd`, `P_SetupLevel` calls `RIDE_LevelLoaded`, `P_DamageMobj` scales the player's damage by `RIDE_ScaleDamage`, and `vissprite_t` records its `mobj` so a touch can find the monster under it.
+- **Ride mode (`__ANDROID__` only):** `G_BuildTiccmd` hands the ticcmd to `RIDE_BuildTiccmd` and `P_SetupLevel` calls `RIDE_LevelLoaded`, and `vissprite_t` records its `mobj` so a touch can find the monster under it.
 
 ## Bike library
 
@@ -124,7 +136,7 @@ scripts/sync-bike-lib.sh ~/dev/soloton origin/main
 ## Not done yet
 
 - OPL (Sound Blaster) music: Android's General MIDI synthesiser sounds different from DOOM's original FM music
-- Tuning ride mode's speed and firepower on a real bike
+- Tuning ride mode's speed and power-to-weapon mapping on a real bike
 - Multiplayer
 - `-iwad` and other WAD names
 - On-screen keyboard for save names

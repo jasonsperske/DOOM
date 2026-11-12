@@ -16,7 +16,8 @@
 //   to the bosses, then circle the nearest at a distance, sidestepping their shots, until they
 //   are dead. Then ride on to the level's end: an exit, or the sector that ends it (E1M8's
 //   teleporter into a deadly room).
-// - Damage the player deals is scaled by firepower, from pace and resistance (RIDE_ScaleDamage).
+// - Pedal power (pace, scaled up by resistance) picks the weapon, from the pistol up to the BFG.
+//   The rocket launcher is only used when its splash cannot reach the player. Ammo is unlimited.
 //
 // Everything here runs on the game thread except the RIDE_Set* inputs, which the UI thread
 // writes.
@@ -70,6 +71,11 @@ extern int viewwindowx, viewwindowy;
 #define FULL_PACE       4.5f    // metres per second for full speed (about 105 rpm)
 #define MAX_MOVE        50      // DOOM's running forwardmove
 #define EXIT_REACH      40.0f   // trigger the exit within this distance of its line
+#define ROCKET_MIN_RANGE 256.0f // rockets only at targets this far (splash reaches 128) ...
+#define ROCKET_CLEAR    192.0f  // ... and with no monster this close to the player
+#define ROCKET_RETURN   64.0f   // extra distance needed to switch back to rockets
+#define TIER_HYSTERESIS 0.15f   // fraction of a tier power must pass before changing weapon
+#define SWITCH_TICS     (TICRATE / 2)   // at least this long between weapon changes
 #define BOSS_APPROACH   160.0f  // ride until this close to a boss (it is fought once in sight)
 #define BOSS_ENGAGE     1100.0f // fight a boss in sight this close
 #define BOSS_UNSEEN_TICS (3*TICRATE) // keep fighting this long after losing sight of it
@@ -88,7 +94,11 @@ static float g_pace;          // metres per second
 static float g_resistance;    // 0..1
 static int g_touchDown;
 static float g_touchU, g_touchV;   // 0..1 across the 320x200 frame
-static float g_firepower = 1.0f;   // written by the game thread, read by the UI
+static float g_power;              // 0..1 pedal power; written by the game thread, read by the UI
+static int g_weapon = -1;          // weapon ride mode has chosen, or -1; read by the UI
+static int g_tiers[8], g_numTiers;   // weapons from weakest to strongest in this game
+static int g_tier = -1;
+static int g_lastSwitchTic = -1000;
 
 void RIDE_SetEnabled(int enabled)
 {
@@ -293,6 +303,8 @@ void RIDE_LevelLoaded(void)
     // Called from P_SetupLevel; the grid is built on the first tic of the level instead,
     // once the player's mobj exists.
     g_level++;
+    g_numTiers = 0;      // the game (and its weapons) may have changed
+    g_tier = -1;
     g_bossCleared = 0;
     g_bossDeadTic = -1;
     g_bossFloorMoved = 0;
@@ -1393,10 +1405,79 @@ static angle_t BossSteer(mobj_t* mo, mobj_t* boss)
     return R_PointToAngle2(mo->x, mo->y, mo->x + (fixed_t)(bestX * 64 * FRACUNIT), mo->y + (fixed_t)(bestY * 64 * FRACUNIT));
 }
 
-int RIDE_ScaleDamage(int damage)
+// ---------------------------------------------------------------------------
+// Weapons: pedal power picks one
+
+
+static void BuildTiers(void)
 {
-    float scaled = damage * g_firepower;
-    return scaled < 1 ? 1 : (int)(scaled + 0.5f);
+    g_numTiers = 0;
+    g_tiers[g_numTiers++] = wp_pistol;
+    g_tiers[g_numTiers++] = wp_shotgun;
+    if (gamemode == commercial)
+        g_tiers[g_numTiers++] = wp_supershotgun;
+    g_tiers[g_numTiers++] = wp_chaingun;
+    g_tiers[g_numTiers++] = wp_missile;
+    if (gamemode != shareware)
+    {
+        g_tiers[g_numTiers++] = wp_plasma;
+        g_tiers[g_numTiers++] = wp_bfg;
+    }
+}
+
+// Is it safe to fire a rocket? Not at a target inside its blast, nor with a monster close by
+// that could step into the shot. margin widens both distances.
+static int RocketSafe(mobj_t* mo, float margin)
+{
+    if (g_target)
+    {
+        float dx = (g_target->x - mo->x) / (float)FRACUNIT, dy = (g_target->y - mo->y) / (float)FRACUNIT;
+        if (sqrtf(dx * dx + dy * dy) - g_target->radius / (float)FRACUNIT < ROCKET_MIN_RANGE + margin)
+            return 0;
+    }
+    for (thinker_t* th = thinkercap.next; th != &thinkercap; th = th->next)
+    {
+        if (th->function.acp1 != (actionf_p1)P_MobjThinker)
+            continue;
+        mobj_t* m = (mobj_t*)th;
+        if (m == mo || m->health <= 0 || !(m->flags & MF_SHOOTABLE))
+            continue;
+        float dx = (m->x - mo->x) / (float)FRACUNIT, dy = (m->y - mo->y) / (float)FRACUNIT;
+        if (dx * dx + dy * dy < (ROCKET_CLEAR + margin) * (ROCKET_CLEAR + margin))
+            return 0;
+    }
+    return 1;
+}
+
+static void ChooseWeapon(player_t* player)
+{
+    if (!g_numTiers)
+        BuildTiers();
+
+    // Power to a tier, holding the current one until power is clearly past its edges.
+    float scaled = g_power * g_numTiers;
+    int tier = (int)scaled;
+    if (tier >= g_numTiers) tier = g_numTiers - 1;
+    if (g_tier >= 0 && scaled > g_tier - TIER_HYSTERESIS && scaled < g_tier + 1 + TIER_HYSTERESIS)
+        tier = g_tier;
+    g_tier = tier;
+
+    int weapon = g_tiers[tier];
+    // Coming back to rockets needs a little more room than leaving them, so it doesn't flap.
+    if (weapon == wp_missile &&
+        !RocketSafe(player->mo, player->readyweapon == wp_missile ? 0 : ROCKET_RETURN))
+        weapon = g_tiers[tier - 1];   // too close for rockets: the next one down
+    g_weapon = weapon;
+
+    player->weaponowned[weapon] = true;   // the bike chooses; no need to have found it
+    if (player->readyweapon != weapon && player->pendingweapon != weapon &&
+        gametic - g_lastSwitchTic > SWITCH_TICS)
+    {
+        LOGI("Ride: weapon %d (power %.2f, tier %d%s)", weapon, g_power, tier,
+             g_tiers[tier] == wp_missile && weapon != wp_missile ? ", too close for rockets" : "");
+        player->pendingweapon = weapon;
+        g_lastSwitchTic = gametic;
+    }
 }
 
 static int g_fighting;   // circling a boss this tic
@@ -1406,9 +1487,14 @@ int RIDE_IsActive(void)
     return g_enabled && (g_routeState == ROUTE_OK || g_fighting) && gamestate == GS_LEVEL && !demoplayback;
 }
 
-float RIDE_Firepower(void)
+float RIDE_Power(void)
 {
-    return g_firepower;
+    return g_power;
+}
+
+int RIDE_Weapon(void)
+{
+    return RIDE_IsActive() ? g_weapon : -1;
 }
 
 int RIDE_HasTarget(void)
@@ -1431,15 +1517,12 @@ void RIDE_BuildTiccmd(ticcmd_t* cmd)
     v = g_touchV;
     pthread_mutex_unlock(&g_inputLock);
 
-    // Firepower: 0.5x to 3x from pace, raised by resistance. Without a bike it stays 1x.
-    if (live)
+    // Pedal power, 0..1: pace, scaled up by resistance.
     {
         float speed = pace / FULL_PACE;
         if (speed > 1) speed = 1;
-        g_firepower = 0.5f + 2.5f * speed * (0.4f + 0.6f * resistance);
+        g_power = speed * (0.4f + 0.6f * resistance);
     }
-    else
-        g_firepower = 1.0f;
 
     if (gamestate != GS_LEVEL || demoplayback || netgame)
         return;
@@ -1448,6 +1531,10 @@ void RIDE_BuildTiccmd(ticcmd_t* cmd)
     mobj_t* mo = player->mo;
     if (!mo)
         return;
+
+    // Unlimited ammo, in ride and free mode alike.
+    for (int a = 0; a < NUMAMMO; a++)
+        player->ammo[a] = player->maxammo[a];
 
     if (g_builtLevel != g_level)
     {
@@ -1554,6 +1641,8 @@ void RIDE_BuildTiccmd(ticcmd_t* cmd)
     if (!g_targetTapped && gametic % TARGET_TICS == 0)
         g_target = NearestTarget(mo);
 
+    ChooseWeapon(player);
+
     // Steering
     angle_t moveAngle;
     if (g_fighting)
@@ -1602,7 +1691,8 @@ void RIDE_BuildTiccmd(ticcmd_t* cmd)
     {
         int off = (int)(faceAngle - mo->angle);
         if (off < 0) off = -off;
-        if (off < (int)(ANG45 / 4))
+        // Never a rocket at something inside its blast.
+        if (off < (int)(ANG45 / 4) && (player->readyweapon != wp_missile || RocketSafe(mo, 0)))
             cmd->buttons |= BT_ATTACK;
     }
     if (!touchDown)

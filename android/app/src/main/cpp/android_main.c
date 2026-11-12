@@ -419,7 +419,13 @@ Java_dev_soloton_doom_DoomNative_nativeRideTouch(JNIEnv* env, jclass cls, jboole
 }
 
 JNIEXPORT jfloat JNICALL
-Java_dev_soloton_doom_DoomNative_nativeFirepower(JNIEnv* env, jclass cls)
+Java_dev_soloton_doom_DoomNative_nativePower(JNIEnv* env, jclass cls)
 {
-    return RIDE_Firepower();
+    return RIDE_Power();
+}
+
+JNIEXPORT jint JNICALL
+Java_dev_soloton_doom_DoomNative_nativeRideWeapon(JNIEnv* env, jclass cls)
+{
+    return RIDE_Weapon();
 }
