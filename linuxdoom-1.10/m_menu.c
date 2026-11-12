@@ -1102,6 +1102,10 @@ void M_QuitResponse(int ch)
 
 void M_QuitDOOM(int choice)
 {
+#ifdef __ANDROID__
+  // Touch: Quit Game quits, without the "press y" prompt or the quit sound's pause.
+  I_Quit ();
+#endif
   // We pick index 0 which is language sensitive,
   //  or one at random, between 1 and maximum number.
   if (language != english )

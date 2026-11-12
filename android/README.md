@@ -124,7 +124,7 @@ Changes to the engine sources in `linuxdoom-1.10/`:
 - **64-bit:** pointer arrays allocated at 4 bytes per entry (`r_data.c`, `p_setup.c`); a pointer field in the on-disk `maptexture_t`; pointer-to-`int` casts (`r_data.c`, `r_draw.c`, `z_zone.c`, `p_saveg.c`, `d_net.c`); string config defaults stored in `int`s (`m_misc.c`); zone blocks aligned to 8 bytes; savegames built in their own buffer instead of `screens[1]`, which 64-bit structs overflow (`g_game.c`).
 - **ARM:** built with `-fsigned-char`, because `ticcmd_t`'s movement fields are plain `char`.
 - **Bionic:** no `<values.h>`; `boolean` coexists with `<stdbool.h>`.
-- **Touch (`__ANDROID__` only):** Enter answers "yes" in prompts, an empty save slot gets a default name, the tic loop sleeps instead of spinning, and 8 sound channels by default.
+- **Touch (`__ANDROID__` only):** Quit Game quits at once, with no "press y" prompt; Enter answers "yes" in other prompts; an empty save slot gets a default name, the tic loop sleeps instead of spinning, and 8 sound channels by default.
 - **Ride mode (`__ANDROID__` only):** `G_BuildTiccmd` hands the ticcmd to `RIDE_BuildTiccmd` and `P_SetupLevel` calls `RIDE_LevelLoaded`, and `vissprite_t` records its `mobj` so a touch can find the monster under it.
 
 ## Bike library
