@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: GPL-2.0-or-later -->
+<!--
+    Test APK only. Stand-ins for the two Peloton sensor services, run in their own process so the
+    client talks to them through real Binder transactions and so that process can be killed.
+    They answer the same intent actions as the real services, but live in this test package:
+    the tests point the client at it with BikeEndpoints.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <service
+            android:name="dev.soloton.bike.fake.FakeAffernetService"
+            android:exported="true"
+            android:process=":fakepeloton">
+            <intent-filter>
+                <action android:name="com.onepeloton.affernetservice.IV1Interface" />
+            </intent-filter>
+        </service>
+
+        <service
+            android:name="dev.soloton.bike.fake.FakeSensorDataService"
+            android:exported="true"
+            android:process=":fakepeloton">
+            <intent-filter>
+                <action android:name="android.intent.action.peloton.SensorData" />
+                <category android:name="com.peloton.sensor.category.BIKE" />
+            </intent-filter>
+        </service>
+
+        <!-- The same legacy service as an older build might declare it: no category. -->
+        <service
+            android:name="dev.soloton.bike.fake.FakeOldSensorDataService"
+            android:exported="true"
+            android:process=":fakepeloton">
+            <intent-filter>
+                <action android:name="dev.soloton.bike.fake.OLD_SENSOR_DATA" />
+            </intent-filter>
+        </service>
+
+        <!-- Answers an intent but speaks some other Binder interface. -->
+        <service
+            android:name="dev.soloton.bike.fake.ImposterService"
+            android:exported="true"
+            android:process=":fakepeloton">
+            <intent-filter>
+                <action android:name="dev.soloton.bike.fake.IMPOSTER" />
+            </intent-filter>
+        </service>
+    </application>
+</manifest>

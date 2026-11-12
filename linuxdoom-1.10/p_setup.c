@@ -533,7 +533,7 @@ void P_GroupLines (void)
     }
 	
     // build line tables for each sector	
-    linebuffer = Z_Malloc (total*4, PU_LEVEL, 0);
+    linebuffer = Z_Malloc (total*sizeof(line_t*), PU_LEVEL, 0);
     sector = sectors;
     for (i=0 ; i<numsectors ; i++, sector++)
     {
@@ -687,6 +687,13 @@ P_SetupLevel
     // preload graphics
     if (precache)
 	R_PrecacheLevel ();
+
+#ifdef __ANDROID__
+    {
+	extern void RIDE_LevelLoaded (void);
+	RIDE_LevelLoaded ();
+    }
+#endif
 
     //printf ("free memory: 0x%x\n", Z_FreeMemory());
 

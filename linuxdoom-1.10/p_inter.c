@@ -798,6 +798,7 @@ P_DamageMobj
     player = target->player;
     if (player && gameskill == sk_baby)
 	damage >>= 1; 	// take half damage in trainer mode
+
 		
 
     // Some close combat weapons should not

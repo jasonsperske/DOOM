@@ -405,6 +405,10 @@ typedef struct vissprite_s
     lighttable_t*	colormap;
    
     int			mobjflags;
+
+    // The thing drawn, or NULL for the player's weapon.
+    // Lets a touch on the screen find the monster under it.
+    struct mobj_s*	mobj;
     
 } vissprite_t;
 
