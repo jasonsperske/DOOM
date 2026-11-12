@@ -1315,8 +1315,18 @@ void WI_drawNetgameStats(void)
 
 static int	sp_state;
 
+#ifdef __ANDROID__
+// Android: once the counting is done, move on by itself after this long, time enough to read the
+// stats. USE or FIRE still moves on at once.
+#define STATS_READ_TICS	(8*TICRATE)
+static int		sp_readTics;
+#endif
+
 void WI_initStats(void)
 {
+#ifdef __ANDROID__
+    sp_readTics = 0;
+#endif
     state = StatCount;
     acceleratestage = 0;
     sp_state = 1;
@@ -1412,6 +1422,10 @@ void WI_updateStats(void)
     }
     else if (sp_state == 10)
     {
+#ifdef __ANDROID__
+	if (++sp_readTics >= STATS_READ_TICS)
+	    acceleratestage = 1;
+#endif
 	if (acceleratestage)
 	{
 	    S_StartSound(0, sfx_sgcock);

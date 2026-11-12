@@ -130,6 +130,11 @@ static int g_tiers[8], g_numTiers;   // weapons from weakest to strongest in thi
 static int g_tier = -1;
 static int g_lastSwitchTic = -1000;
 
+// Episode totals (game thread)
+static ridestats_t g_stats;
+static float g_statsResistanceSum;   // resistance times seconds pedalling
+static int g_statsLeveltime;
+
 void RIDE_SetEnabled(int enabled)
 {
     pthread_mutex_lock(&g_inputLock);
@@ -2618,6 +2623,34 @@ int RIDE_Objective(void)
     return code | (g_magic ? 16 : 0);
 }
 
+void RIDE_NewGame(void)
+{
+    memset(&g_stats, 0, sizeof g_stats);
+    g_statsResistanceSum = 0;
+    g_statsLeveltime = 0;
+}
+
+void RIDE_LevelCompleted(void)
+{
+    if (demoplayback)
+        return;
+    player_t* p = &players[consoleplayer];
+    g_stats.levels++;
+    g_stats.seconds += leveltime / TICRATE;
+    g_stats.kills += p->killcount;
+    g_stats.maxKills += totalkills;
+    g_stats.items += p->itemcount;
+    g_stats.maxItems += totalitems;
+    g_stats.secrets += p->secretcount;
+    g_stats.maxSecrets += totalsecret;
+}
+
+void RIDE_EpisodeStats(ridestats_t* out)
+{
+    *out = g_stats;
+    out->resistance = g_stats.ridingSeconds > 0 ? g_statsResistanceSum / g_stats.ridingSeconds : 0;
+}
+
 int RIDE_HasTarget(void)
 {
     return g_target != NULL;
@@ -2643,6 +2676,23 @@ void RIDE_BuildTiccmd(ticcmd_t* cmd)
         float speed = pace / FULL_PACE;
         if (speed > 1) speed = 1;
         g_power = speed * (0.4f + 0.6f * resistance);
+    }
+
+    // Episode totals: distance and pedalling, for each game tic played (none while paused).
+    if (gamestate == GS_LEVEL && !demoplayback)
+    {
+        int dt = leveltime - g_statsLeveltime;
+        g_statsLeveltime = leveltime;
+        if (dt > 0 && dt <= TICRATE)
+        {
+            float secs = dt / (float)TICRATE;
+            g_stats.meters += pace * secs;
+            if (pace >= 0.2f)
+            {
+                g_stats.ridingSeconds += secs;
+                g_statsResistanceSum += resistance * secs;
+            }
+        }
     }
 
     if (gamestate != GS_LEVEL || demoplayback || netgame)

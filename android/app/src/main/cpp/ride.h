@@ -22,5 +22,21 @@ int RIDE_HasTarget(void);
 // Engine hooks (g_game.c, p_setup.c)
 void RIDE_BuildTiccmd(ticcmd_t* cmd);
 void RIDE_LevelLoaded(void);
+void RIDE_NewGame(void);          // G_InitNew: start the episode totals afresh
+void RIDE_LevelCompleted(void);   // G_DoCompleted: add the level's kills, items and secrets
+
+// Totals since the game started, shown after the episode's closing text (f_finale.c).
+typedef struct
+{
+    float meters;           // distance pedalled, from the bike's pace
+    float ridingSeconds;    // time spent pedalling
+    float resistance;       // average resistance while pedalling, 0..1
+    int seconds;            // time in the levels completed
+    int levels;
+    int kills, maxKills;
+    int items, maxItems;
+    int secrets, maxSecrets;
+} ridestats_t;
+void RIDE_EpisodeStats(ridestats_t* out);
 
 #endif

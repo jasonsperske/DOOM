@@ -89,6 +89,8 @@ Each level is ridden as a tour, and the bike drives:
   - When the bosses are dead and their walls (tag 666) have lowered, a new route takes you on. On E1M8 that is up the stairs to the teleporter, into the room that ends the episode.
 - **FREE** switches to the touch controls below; **RIDE** switches back. If no route to the exit can be found, the touch controls are used.
 - When you die, touch the screen to restart.
+- **Between levels** the stats screen moves on by itself 8 seconds after its counts finish, then the "Entering" screen moves on after 4 seconds as usual. USE skips either one.
+- **At the end of an episode**, after the closing text, a totals screen shows the distance pedalled, time pedalling, average speed and resistance, kills, secrets, and levels played. Press USE to go on to the episode's end picture. Totals start afresh whenever a game starts, so loading a saved game also starts them afresh.
 
 How the route is planned (`app/src/main/cpp/ride.c`):
 
@@ -147,7 +149,7 @@ Changes to the engine sources in `linuxdoom-1.10/`:
 - **ARM:** built with `-fsigned-char`, because `ticcmd_t`'s movement fields are plain `char`.
 - **Bionic:** no `<values.h>`; `boolean` coexists with `<stdbool.h>`.
 - **Touch (`__ANDROID__` only):** Quit Game quits at once, with no "press y" prompt; Enter answers "yes" in other prompts; an empty save slot gets a default name, the tic loop sleeps instead of spinning, and 8 sound channels by default.
-- **Ride mode (`__ANDROID__` only):** `G_BuildTiccmd` hands the ticcmd to `RIDE_BuildTiccmd` and `P_SetupLevel` calls `RIDE_LevelLoaded`, and `vissprite_t` records its `mobj` so a touch can find the monster under it.
+- **Ride mode (`__ANDROID__` only):** `G_BuildTiccmd` hands the ticcmd to `RIDE_BuildTiccmd` and `P_SetupLevel` calls `RIDE_LevelLoaded`, and `vissprite_t` records its `mobj` so a touch can find the monster under it. `G_InitNew` and `G_DoCompleted` call `RIDE_NewGame` and `RIDE_LevelCompleted` for the episode totals. `F_Ticker` and `F_Drawer` show the totals (finale stage 3) between the closing text and the end picture, and `WI_updateStats` moves on by itself after 8 seconds.
 
 ## Bike library
 
