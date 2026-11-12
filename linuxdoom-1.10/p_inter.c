@@ -798,6 +798,15 @@ P_DamageMobj
     player = target->player;
     if (player && gameskill == sk_baby)
 	damage >>= 1; 	// take half damage in trainer mode
+
+#ifdef __ANDROID__
+    // Ride mode: pedalling speed and resistance set the player's firepower.
+    if (source && source->player && !player)
+    {
+	extern int RIDE_ScaleDamage (int damage);
+	damage = RIDE_ScaleDamage (damage);
+    }
+#endif
 		
 
     // Some close combat weapons should not

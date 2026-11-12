@@ -11,6 +11,7 @@
 #include <android/native_window_jni.h>
 
 #include "doom_android.h"
+#include "ride.h"
 
 #include "doomdef.h"
 #include "doomstat.h"
@@ -344,6 +345,7 @@ Java_dev_soloton_doom_DoomNative_nativeSetPaused(JNIEnv* env, jclass cls, jboole
 #define UI_LEVEL     4
 #define UI_AUTOMAP   8
 #define UI_DEMO      16
+#define UI_RIDE      32
 
 JNIEXPORT jint JNICALL
 Java_dev_soloton_doom_DoomNative_nativeUiState(JNIEnv* env, jclass cls)
@@ -359,5 +361,35 @@ Java_dev_soloton_doom_DoomNative_nativeUiState(JNIEnv* env, jclass cls)
         state |= UI_AUTOMAP;
     if (demoplayback || gamestate == GS_DEMOSCREEN)
         state |= UI_DEMO;
+    if (RIDE_IsActive())
+        state |= UI_RIDE;
     return state;
+}
+
+// ---------------------------------------------------------------------------
+// Ride mode
+
+JNIEXPORT void JNICALL
+Java_dev_soloton_doom_DoomNative_nativeSetRide(JNIEnv* env, jclass cls, jboolean enabled)
+{
+    RIDE_SetEnabled(enabled);
+}
+
+JNIEXPORT void JNICALL
+Java_dev_soloton_doom_DoomNative_nativeSetBike(JNIEnv* env, jclass cls,
+                                               jboolean live, jfloat pace, jfloat resistance)
+{
+    RIDE_SetBike(live, pace, resistance);
+}
+
+JNIEXPORT void JNICALL
+Java_dev_soloton_doom_DoomNative_nativeRideTouch(JNIEnv* env, jclass cls, jboolean down, jfloat u, jfloat v)
+{
+    RIDE_SetTouch(down, u, v);
+}
+
+JNIEXPORT jfloat JNICALL
+Java_dev_soloton_doom_DoomNative_nativeFirepower(JNIEnv* env, jclass cls)
+{
+    return RIDE_Firepower();
 }

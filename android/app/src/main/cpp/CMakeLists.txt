@@ -19,11 +19,12 @@ add_library(doom SHARED
     i_net_android.c
     i_sound_android.c
     i_system_android.c
-    i_video_android.c)
+    i_video_android.c
+    ride.c)
 
 # The Android backends are modern C; only the engine needs gnu89.
 set_source_files_properties(
-    android_main.c i_net_android.c i_sound_android.c i_system_android.c i_video_android.c
+    android_main.c i_net_android.c i_sound_android.c i_system_android.c i_video_android.c ride.c
     PROPERTIES COMPILE_OPTIONS "-std=gnu11")
 
 target_include_directories(doom PRIVATE ${DOOM_SRC} ${CMAKE_CURRENT_SOURCE_DIR})

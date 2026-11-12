@@ -19,6 +19,7 @@ object DoomNative {
     const val UI_LEVEL = 4
     const val UI_AUTOMAP = 8
     const val UI_DEMO = 16
+    const val UI_RIDE = 32
 
     /** Starts the engine; false if it is already running. */
     @JvmStatic external fun nativeStart(args: Array<String>, wadDir: String, homeDir: String): Boolean
@@ -33,6 +34,19 @@ object DoomNative {
     @JvmStatic external fun nativeSetPaused(paused: Boolean)
 
     @JvmStatic external fun nativeUiState(): Int
+
+    // Ride mode (ride.c): the bike moves the player along a route to the exit.
+
+    @JvmStatic external fun nativeSetRide(enabled: Boolean)
+
+    /** [pace] in metres per second, [resistance] 0..1; [live] says they come from a real bike. */
+    @JvmStatic external fun nativeSetBike(live: Boolean, pace: Float, resistance: Float)
+
+    /** A finger on the game view, [u] and [v] 0..1 across it; held on a monster, it fires. */
+    @JvmStatic external fun nativeRideTouch(down: Boolean, u: Float, v: Float)
+
+    /** Damage multiplier the bike currently gives. */
+    @JvmStatic external fun nativeFirepower(): Float
 
     fun tapKey(doomKey: Int) {
         nativeKey(doomKey, true)

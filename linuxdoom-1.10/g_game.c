@@ -421,6 +421,14 @@ void G_BuildTiccmd (ticcmd_t* cmd)
  
     cmd->forwardmove += forward; 
     cmd->sidemove += side;
+
+#ifdef __ANDROID__
+    // Ride mode (android/app/src/main/cpp/ride.c) steers along the level's route.
+    {
+	extern void RIDE_BuildTiccmd (ticcmd_t* cmd);
+	RIDE_BuildTiccmd (cmd);
+    }
+#endif
     
     // special buttons
     if (sendpause) 

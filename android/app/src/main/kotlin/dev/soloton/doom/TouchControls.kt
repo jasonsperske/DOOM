@@ -8,6 +8,7 @@ import android.graphics.Paint
 import android.graphics.PointF
 import android.view.MotionEvent
 import android.view.View
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.max
@@ -17,18 +18,33 @@ import kotlin.math.min
  * Touch controls drawn over the game, laid out for the gen 1 Peloton's 1920x1080 panel at arm's
  * length (targets of 96 px or more), and scaled for other screens.
  *
+ * **Ride mode** (the default while the level has a route, see ride.c): the bike moves the player.
+ * - Hold a finger on a monster to target it and fire.
+ * - GO (bottom left) stands in for pedalling when no bike is connected.
+ * - FREE switches to the touch controls below; RIDE switches back.
+ *
+ * **Free mode:**
  * - Left side: a floating stick. Up/down walks, left/right strafes, pushing to the rim runs.
  * - Anywhere else: drag sideways to turn.
  * - FIRE and USE at the bottom right; dragging a finger on FIRE also turns.
- * - MENU and MAP at the top left, weapons 1-7 down the right edge.
  *
+ * Always: MENU and MAP at the top left, weapons 1-7 down the right edge, bike readout on the left.
  * In menus the stick sends arrow keys, FIRE becomes OK (Enter; also "yes" in prompts) and
  * USE becomes BACK.
  */
 @SuppressLint("ClickableViewAccessibility")
 class TouchControls(context: Context) : View(context) {
 
-    private enum class Kind { FIRE, USE, MENU, MAP, WEAPON }
+    /** What the bike is doing, for the readout. Set by the activity. */
+    data class BikeStatus(val live: Boolean, val cadenceRpm: Float, val resistance: Float)
+
+    @Volatile var bikeStatus = BikeStatus(false, 0f, 0f)
+
+    /** True while GO is held: the activity turns it into pace when no bike is live. */
+    @Volatile var goHeld = false
+        private set
+
+    private enum class Kind { FIRE, USE, MENU, MAP, WEAPON, RIDE, GO }
 
     private class Button(val kind: Kind, val weapon: Int = 0) {
         var cx = 0f
@@ -43,10 +59,14 @@ class TouchControls(context: Context) : View(context) {
     private val use = Button(Kind.USE)
     private val menu = Button(Kind.MENU)
     private val map = Button(Kind.MAP)
+    private val ride = Button(Kind.RIDE)
+    private val go = Button(Kind.GO)
     private val weapons = (1..7).map { Button(Kind.WEAPON, it) }
-    private val buttons = listOf(fire, use, menu, map) + weapons
+    private val buttons = listOf(fire, use, menu, map, ride, go) + weapons
 
-    // Floating stick
+    private var rideEnabled = true
+
+    // Floating stick (free mode)
     private var stickPointer = -1
     private val stickOrigin = PointF()
     private val stickKnob = PointF()
@@ -55,13 +75,21 @@ class TouchControls(context: Context) : View(context) {
     private val stickKeys = mutableSetOf<Int>()
     private var menuDirection = 0         // arrow key currently repeating in menus, or 0
 
-    // Turning
+    // Turning (free mode)
     private var turnPointer = -1
     private var lastTurnX = 0f
     private var turnRemainder = 0f
 
+    // Aiming (ride mode)
+    private var aimPointer = -1
+
     private var unit = 1f                 // 1 at 1080 px tall
     private var stickZoneRight = 0f
+    private var gameLeft = 0f
+    private var gameTop = 0f
+    private var gameWidth = 1f
+    private var gameHeight = 1f
+    private var sideColumn = 0f
     private var uiState = 0
 
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -73,6 +101,8 @@ class TouchControls(context: Context) : View(context) {
     }
 
     private val menuMode get() = uiState and (DoomNative.UI_MENU or DoomNative.UI_PROMPT) != 0
+    private val rideMode get() = !menuMode && uiState and DoomNative.UI_RIDE != 0
+    private val inLevel get() = uiState and DoomNative.UI_LEVEL != 0
 
     private val repeatArrow = object : Runnable {
         override fun run() {
@@ -86,6 +116,7 @@ class TouchControls(context: Context) : View(context) {
     private val pollState = object : Runnable {
         override fun run() {
             refreshUiState()
+            invalidate()   // the bike readout changes continuously
             postDelayed(this, STATE_POLL_MS)
         }
     }
@@ -103,12 +134,17 @@ class TouchControls(context: Context) : View(context) {
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         unit = h / 1080f
-        val gameWidth = h * 4f / 3f
-        val pillar = max(0f, (w - gameWidth) / 2f)
-        val sideColumn = max(pillar / 2f, 130f * unit)
+        gameWidth = min(w.toFloat(), h * 4f / 3f)
+        gameHeight = gameWidth * 3f / 4f
+        gameLeft = (w - gameWidth) / 2f
+        gameTop = (h - gameHeight) / 2f
+        val pillar = max(0f, gameLeft)
+        sideColumn = max(pillar / 2f, 130f * unit)
 
         place(menu, sideColumn, 110f * unit, 75f * unit)
         place(map, sideColumn, 290f * unit, 75f * unit)
+        place(ride, sideColumn, 470f * unit, 75f * unit)
+        place(go, sideColumn, h - 170f * unit, 105f * unit)
 
         val weaponStep = (h - 120f * unit) / weapons.size
         weapons.forEachIndexed { i, b ->
@@ -137,8 +173,9 @@ class TouchControls(context: Context) : View(context) {
         val state = DoomNative.nativeUiState()
         if (state == uiState) return
         val wasMenu = menuMode
+        val wasRide = rideMode
         uiState = state
-        if (wasMenu != menuMode) releaseAll()
+        if (wasMenu != menuMode || wasRide != rideMode) releaseAll()
         invalidate()
     }
 
@@ -164,7 +201,12 @@ class TouchControls(context: Context) : View(context) {
         return true
     }
 
-    private fun visibleButtons(): List<Button> = if (menuMode) listOf(fire, use, menu) else buttons
+    private fun visibleButtons(): List<Button> = when {
+        menuMode -> listOf(fire, use, menu)
+        rideMode -> listOfNotNull(menu, map, ride, go.takeIf { !bikeStatus.live }) + weapons
+        inLevel -> listOf(fire, use, menu, map, ride) + weapons
+        else -> listOf(fire, use, menu, map) + weapons
+    }
 
     private fun pointerDown(id: Int, x: Float, y: Float) {
         val button = visibleButtons().firstOrNull { it.pointerId == -1 && it.contains(x, y) }
@@ -172,6 +214,13 @@ class TouchControls(context: Context) : View(context) {
             button.pointerId = id
             pressButton(button)
             if (button === fire && turnPointer == -1) startTurn(id, x)
+            return
+        }
+        if (rideMode) {
+            if (aimPointer == -1) {
+                aimPointer = id
+                sendAim(true, x, y)
+            }
             return
         }
         if (x < stickZoneRight && stickPointer == -1) {
@@ -184,6 +233,7 @@ class TouchControls(context: Context) : View(context) {
     }
 
     private fun pointerMove(id: Int, x: Float, y: Float) {
+        if (id == aimPointer) sendAim(true, x, y)
         if (id == stickPointer) {
             stickKnob.set(x, y)
             updateStick()
@@ -201,12 +251,20 @@ class TouchControls(context: Context) : View(context) {
 
     private fun pointerUp(id: Int) {
         buttons.firstOrNull { it.pointerId == id }?.let { releaseButton(it) }
+        if (id == aimPointer) {
+            aimPointer = -1
+            sendAim(false, 0f, 0f)
+        }
         if (id == stickPointer) {
             stickPointer = -1
             setStickKeys(emptySet())
             setMenuDirection(0)
         }
         if (id == turnPointer) turnPointer = -1
+    }
+
+    private fun sendAim(down: Boolean, x: Float, y: Float) {
+        DoomNative.nativeRideTouch(down, (x - gameLeft) / gameWidth, (y - gameTop) / gameHeight)
     }
 
     private fun startTurn(id: Int, x: Float) {
@@ -217,6 +275,8 @@ class TouchControls(context: Context) : View(context) {
 
     private fun releaseAll() {
         buttons.forEach { if (it.pointerId != -1) releaseButton(it) }
+        if (aimPointer != -1) sendAim(false, 0f, 0f)
+        aimPointer = -1
         stickPointer = -1
         turnPointer = -1
         setStickKeys(emptySet())
@@ -233,13 +293,23 @@ class TouchControls(context: Context) : View(context) {
             Kind.MENU -> DoomKeys.ESCAPE
             Kind.MAP -> DoomKeys.TAB
             Kind.WEAPON -> '0'.code + b.weapon
+            Kind.RIDE -> {
+                rideEnabled = !rideEnabled
+                DoomNative.nativeSetRide(rideEnabled)
+                0
+            }
+            Kind.GO -> {
+                goHeld = true
+                0
+            }
         }
         b.heldKey = key
-        DoomNative.nativeKey(key, true)
+        if (key != 0) DoomNative.nativeKey(key, true)
     }
 
     private fun releaseButton(b: Button) {
         if (b.heldKey != 0) DoomNative.nativeKey(b.heldKey, false)
+        if (b.kind == Kind.GO) goHeld = false
         b.heldKey = 0
         b.pointerId = -1
     }
@@ -302,6 +372,7 @@ class TouchControls(context: Context) : View(context) {
 
     override fun onDraw(canvas: Canvas) {
         val inMenu = menuMode
+        val riding = rideMode
         for (b in visibleButtons()) {
             val label = when (b.kind) {
                 Kind.FIRE -> if (inMenu) "OK" else "FIRE"
@@ -309,19 +380,48 @@ class TouchControls(context: Context) : View(context) {
                 Kind.MENU -> "MENU"
                 Kind.MAP -> "MAP"
                 Kind.WEAPON -> b.weapon.toString()
+                Kind.RIDE -> if (rideEnabled) "FREE" else "RIDE"
+                Kind.GO -> "GO"
             }
             drawControl(canvas, b.cx, b.cy, b.radius, b.pointerId != -1, label)
         }
 
-        if (stickPointer != -1) {
-            drawRing(canvas, stickOrigin.x, stickOrigin.y, stickRadius, false)
-            drawControl(canvas, stickKnob.x, stickKnob.y, stickRadius * 0.4f, true, null)
-        } else {
-            drawRing(canvas, stickRest.x, stickRest.y, stickRadius, false)
-            textPaint.alpha = 110
-            canvas.drawText(if (inMenu) "SELECT" else "MOVE", stickRest.x, stickRest.y + textPaint.textSize / 3, textPaint)
-            textPaint.alpha = 255
+        if (!riding) {
+            if (stickPointer != -1) {
+                drawRing(canvas, stickOrigin.x, stickOrigin.y, stickRadius, false)
+                drawControl(canvas, stickKnob.x, stickKnob.y, stickRadius * 0.4f, true, null)
+            } else {
+                drawRing(canvas, stickRest.x, stickRest.y, stickRadius, false)
+                textPaint.alpha = 110
+                canvas.drawText(if (inMenu) "SELECT" else "MOVE", stickRest.x, stickRest.y + textPaint.textSize / 3, textPaint)
+                textPaint.alpha = 255
+            }
         }
+
+        if (inLevel && !inMenu) drawBikeReadout(canvas, riding)
+    }
+
+    private fun drawBikeReadout(canvas: Canvas, riding: Boolean) {
+        val bike = bikeStatus
+        val lines = mutableListOf<String>()
+        if (bike.live) {
+            lines += String.format(Locale.US, "%.0f RPM", bike.cadenceRpm)
+            lines += String.format(Locale.US, "RES %.0f%%", bike.resistance * 100f)
+        } else {
+            lines += "NO BIKE"
+        }
+        when {
+            riding -> lines += String.format(Locale.US, "POWER x%.1f", DoomNative.nativeFirepower())
+            rideEnabled -> lines += "NO ROUTE"
+        }
+        val size = textPaint.textSize
+        textPaint.textSize = 28f * unit
+        var y = 600f * unit
+        for (line in lines) {
+            canvas.drawText(line, sideColumn, y, textPaint)
+            y += 42f * unit
+        }
+        textPaint.textSize = size
     }
 
     private fun drawControl(canvas: Canvas, x: Float, y: Float, r: Float, pressed: Boolean, label: String?) {

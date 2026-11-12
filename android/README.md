@@ -1,6 +1,8 @@
 # DOOM for the Peloton Bike (gen 1)
 
-An Android port of `linuxdoom-1.10` for the original Peloton Bike's tablet: Android 7.0 (API 24), 1920x1080 landscape, MediaTek MT8173. It runs on any Android 7.0+ device. Touch controls for now; bike input (cadence, resistance) comes later.
+An Android port of `linuxdoom-1.10` for the original Peloton Bike's tablet: Android 7.0 (API 24), 1920x1080 landscape, MediaTek MT8173. It runs on any Android 7.0+ device.
+
+You ride through each level: pedalling moves you along a route to the exit, and you fight by touching the monsters. Touch-only controls are there too.
 
 The build setup follows [soloton](https://github.com/jasonsperske/soloton): the same toolchain, `minSdk 24`, and an APK for sideloading.
 
@@ -41,7 +43,39 @@ adb shell am start -n dev.soloton.doom/.DoomActivity --es args "-warp 1 3 -skill
 
 To test on soloton's gen 1 emulator, run `scripts/gen1-emulator.sh` in the soloton repo, then install as above.
 
+## Ride mode
+
+When a level starts, the game plans a route from the player to the exit, then the bike drives:
+
+- **Pedal to move.** Cadence sets the speed along the route: stop pedalling and you stop. Without a bike, hold **GO** instead (about 70 rpm).
+- **Doors open as you reach them,** locked or not. Lifts lower, and stairs and floors that a switch or trigger line would move are moved for you. The exit switch or line triggers when you arrive.
+- **You face the nearest monster you can see** and strafe, so you keep following the route while it is in your sights. With nothing in sight, you face along the route.
+- **Hold a finger on a monster to fire at it.** That also makes it your target until it dies or you let go.
+- **Firepower** multiplies the damage you deal, from 0.5x (barely pedalling) to 3x (fast, at high resistance): `0.5 + 2.5 x speed x (0.4 + 0.6 x resistance)`, where speed is pace over 4.5 m/s (about 105 rpm), capped at 1. Without a bike it is 1x. The left edge shows cadence, resistance and firepower.
+- **Boss levels** end when the bosses die, not at an exit: E1M8 (two Barons of Hell) and the other episode finales. These play differently:
+  - The route leads to the bosses.
+  - Once you can see one, you circle the nearest at 320–640 units, in whichever direction is clear. You sidestep any shot that would pass within 80 units in the next 40 tics.
+  - You keep the boss in front of you, so hold a finger on it as you pass.
+  - When the bosses are dead and their walls (tag 666) have lowered, a new route takes you on. On E1M8 that is up the stairs to the teleporter, into the room that ends the episode.
+- **FREE** switches to the touch controls below; **RIDE** switches back. If no route to the exit can be found, the touch controls are used.
+- When you die, touch the screen to restart.
+
+How the route is planned (`app/src/main/cpp/ride.c`):
+
+1. The map is rasterised into 8-unit cells marking where the player's 30x30 box fits. Cells whose box touches a wall, a ledge too high to climb, a too-low ceiling or solid scenery are blocked.
+2. Doors are planned as open. Lifts and floors moved by switches or trigger lines (including staircases, built as `EV_BuildStairs` would) are planned anywhere in the range of heights they can reach.
+3. A* finds the route to the normal exit, falling back to the secret exit, or to a sector that ends the level (special 11). Teleporters count as links.
+4. Each tic, the player steers at the farthest route cell in a straight line. When blocked (usually by a monster), they sidestep, alternating sides each second. They re-plan when knocked off the route, teleported or stuck for 4 seconds; waiting for a lift or door doesn't count as stuck.
+
+Pace and resistance come from soloton's bike library ([below](#bike-library)) 20 times a second. To check the bike's sensors on a real bike:
+
+```bash
+adb shell am start -n dev.soloton.doom/dev.soloton.bike.BikeDiagnosticsActivity
+```
+
 ## Controls
+
+In free mode (or ride mode's MENU, MAP and weapons):
 
 | Control | In the game | In menus |
 |---|---|---|
@@ -67,6 +101,7 @@ Leaving the app pauses the game and opens the menu, so you never come back mid-f
 | `i_sound_android.c` | Sound effects mixed in an OpenSL ES callback (44.1 kHz stereo) |
 | `i_system_android.c` | Timer that ignores time spent paused, 32 MB zone heap, `I_Error`/`I_Quit` call back to Kotlin |
 | `i_net_android.c` | Single player only |
+| `ride.c` | Ride mode: route planning, steering, targeting, doors and lifts, firepower |
 
 Changes to the engine sources in `linuxdoom-1.10/`:
 
@@ -74,11 +109,21 @@ Changes to the engine sources in `linuxdoom-1.10/`:
 - **ARM:** built with `-fsigned-char`, because `ticcmd_t`'s movement fields are plain `char`.
 - **Bionic:** no `<values.h>`; `boolean` coexists with `<stdbool.h>`.
 - **Touch (`__ANDROID__` only):** Enter answers "yes" in prompts, an empty save slot gets a default name, the tic loop sleeps instead of spinning, and 8 sound channels by default.
+- **Ride mode (`__ANDROID__` only):** `G_BuildTiccmd` hands the ticcmd to `RIDE_BuildTiccmd`, `P_SetupLevel` calls `RIDE_LevelLoaded`, `P_DamageMobj` scales the player's damage by `RIDE_ScaleDamage`, and `vissprite_t` records its `mobj` so a touch can find the monster under it.
+
+## Bike library
+
+`libs/bike-core` and `libs/bike` are [soloton](https://github.com/jasonsperske/soloton)'s bike library (GPL-2.0-or-later), vendored at the commit in `libs/UPSTREAM`. Only their build files are this repository's own. To update them:
+
+```bash
+scripts/sync-bike-lib.sh ~/dev/soloton origin/main
+./gradlew :libs:bike-core:test :app:assembleDebug
+```
 
 ## Not done yet
 
 - Music (MUS needs a MIDI synth)
-- Bike input
+- Tuning ride mode's speed and firepower on a real bike
 - Multiplayer
 - `-iwad` and other WAD names
 - On-screen keyboard for save names

@@ -688,6 +688,13 @@ P_SetupLevel
     if (precache)
 	R_PrecacheLevel ();
 
+#ifdef __ANDROID__
+    {
+	extern void RIDE_LevelLoaded (void);
+	RIDE_LevelLoaded ();
+    }
+#endif
+
     //printf ("free memory: 0x%x\n", Z_FreeMemory());
 
 }

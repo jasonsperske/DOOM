@@ -8,6 +8,8 @@ import android.graphics.Color
 import android.graphics.PixelFormat
 import android.os.Bundle
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
@@ -20,6 +22,7 @@ import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import dev.soloton.bike.BikePaceSource
 import java.io.File
 
 /**
@@ -29,12 +32,29 @@ import java.io.File
  * Needs an IWAD (doom1.wad, doom.wad, doomu.wad, doom2.wad, plutonia.wad or tnt.wad, lower case)
  * in the app's own folder, `/sdcard/Android/data/dev.soloton.doom/files`, or in `/sdcard/Doom`.
  *
+ * The bike (via soloton's bike library) drives ride mode: its pace and resistance go to the engine
+ * 20 times a second. Without a bike, the GO button stands in for pedalling.
+ *
  * Extra command-line arguments can be passed for testing:
  * `adb shell am start -n dev.soloton.doom/.DoomActivity --es args "-warp 1 1 -skill 3"`
  */
 class DoomActivity : Activity(), DoomNative.Listener, SurfaceHolder.Callback {
 
     private var running = false
+    private var controls: TouchControls? = null
+    private val bike by lazy { BikePaceSource(applicationContext) }
+    private val handler = Handler(Looper.getMainLooper())
+
+    private val feedBike = object : Runnable {
+        override fun run() {
+            val live = bike.isLive
+            val pace = if (live) bike.metersPerSecond else if (controls?.goHeld == true) GO_PACE else 0f
+            val resistance = if (live) bike.resistance.fraction else 0f
+            DoomNative.nativeSetBike(live, pace, resistance)
+            controls?.bikeStatus = TouchControls.BikeStatus(live, bike.sensors.latest?.cadenceRpm ?: 0f, resistance)
+            handler.postDelayed(this, BIKE_FEED_MS)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -86,7 +106,7 @@ class DoomActivity : Activity(), DoomNative.Listener, SurfaceHolder.Callback {
         val root = FourByThreeFrame(this).apply {
             setBackgroundColor(Color.BLACK)
             addView(surface, FrameLayout.LayoutParams(0, 0, Gravity.CENTER))
-            addView(TouchControls(this@DoomActivity), FrameLayout.LayoutParams(-1, -1))
+            addView(TouchControls(this@DoomActivity).also { controls = it }, FrameLayout.LayoutParams(-1, -1))
         }
         setContentView(root)
     }
@@ -154,6 +174,8 @@ class DoomActivity : Activity(), DoomNative.Listener, SurfaceHolder.Callback {
         super.onResume()
         enterImmersive()
         if (running) DoomNative.nativeSetPaused(false)
+        bike.start()
+        handler.post(feedBike)
     }
 
     override fun onPause() {
@@ -164,6 +186,8 @@ class DoomActivity : Activity(), DoomNative.Listener, SurfaceHolder.Callback {
             }
             DoomNative.nativeSetPaused(true)
         }
+        handler.removeCallbacks(feedBike)
+        bike.stop()
         super.onPause()
     }
 
@@ -242,6 +266,10 @@ class DoomActivity : Activity(), DoomNative.Listener, SurfaceHolder.Callback {
 
     private companion object {
         const val TAG = "DOOM"
+        const val BIKE_FEED_MS = 50L
+
+        /** Pace while GO is held without a bike: about 70 rpm. */
+        const val GO_PACE = 3.0f
 
         /** The names linuxdoom-1.10's IdentifyVersion looks for. */
         val IWADS = listOf("doom2f.wad", "doom2.wad", "plutonia.wad", "tnt.wad", "doomu.wad", "doom.wad", "doom1.wad")
