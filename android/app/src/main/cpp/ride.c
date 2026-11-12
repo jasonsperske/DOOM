@@ -189,6 +189,8 @@ static fixed_t* g_secOpenCeiling;    // highest the ceiling can go (doors)
 #define SF_LIFT    1
 #define SF_HAZARD  2
 #define SF_MANUALDOOR 4   // a door opened by using its own line
+#define SF_AVOID   8      // a lift that raises to its ceiling when its own edge is crossed or used
+#define AVOID_COST 120    // extra route cost per cell in such a lift: only when there's no other way
 
 typedef struct
 {
@@ -649,6 +651,19 @@ static void ComputeSectorLimits(void)
             g_secLock[s] = lock;
     }
 
+    // Lifts that trap: raised to their ceiling (or crushing) by a walk-over or switch line on their
+    // own edge, so stepping on or off can send the floor up with the player on it or inside it.
+    for (int i = 0; i < numlines; i++)
+    {
+        line_t* l = &lines[i];
+        int sp = l->special;
+        if (!l->tag || !(sp == 5 || sp == 55 || sp == 56 || sp == 65 || sp == 91 || sp == 94))
+            continue;
+        for (int s = 0; s < numsectors; s++)
+            if (sectors[s].tag == l->tag && (l->frontsector == &sectors[s] || l->backsector == &sectors[s]))
+                g_secFlags[s] |= SF_AVOID;
+    }
+
     // Sectors tagged by a lift line can be lowered.
     for (int i = 0; i < numlines; i++)
         if (IsLiftSpecial(lines[i].special) && lines[i].tag)
@@ -664,6 +679,7 @@ static void ComputeSectorLimits(void)
         if (!l->tag)
             continue;
         // A one-shot line clears its special once used; its floors are then where they are.
+        // Trapping lifts are only ever planned where they are.
         int plan = l->special && (g_magic || g_lineState[i] == LINE_DONE);
         if (StairStep(l->special))
             PlanStairs(i, plan);
@@ -673,7 +689,7 @@ static void ComputeSectorLimits(void)
                 if (sectors[s].tag != l->tag)
                     continue;
                 AddMover(s, i);
-                if (!plan || !IsFloorMoverSpecial(l->special))
+                if (!plan || !IsFloorMoverSpecial(l->special) || (g_secFlags[s] & SF_AVOID))
                     continue;
                 fixed_t low = P_FindLowestFloorSurrounding(&sectors[s]);
                 fixed_t high = P_FindHighestFloorSurrounding(&sectors[s]);
@@ -907,8 +923,12 @@ static void BuildGrid(void)
             }
     }
 
-    LOGI("Ride: %dx%d grid, %d exit lines, %d goal cells, %d teleporter cells, %d bosses",
-         g_gridW, g_gridH, g_numExitLines, g_numGoalCells, g_numTele, g_numBossSpots);
+    int avoided = 0;
+    for (int s = 0; s < numsectors; s++)
+        if (g_secFlags[s] & SF_AVOID)
+            avoided++;
+    LOGI("Ride: %dx%d grid, %d exit lines, %d goal cells, %d teleporter cells, %d bosses, %d lifts avoided",
+         g_gridW, g_gridH, g_numExitLines, g_numGoalCells, g_numTele, g_numBossSpots, avoided);
 }
 
 // ---------------------------------------------------------------------------
@@ -1084,7 +1104,8 @@ static int Search(int start, int goalFlag, int* cost, int* parent, byte* closed)
                         continue;
             }
             int g = cost[c] + dirs[d][2] * steps + ((g_cellFlags[n] & CF_HAZARD) ? HAZARD_COST : 0) +
-                    ((g_cellFlags[n] & CF_NEAR) ? NEAR_COST : 0);
+                    ((g_cellFlags[n] & CF_NEAR) ? NEAR_COST : 0) +
+                    ((g_secFlags[g_cellSector[n]] & SF_AVOID) ? AVOID_COST : 0);
             if (g < cost[n])
             {
                 cost[n] = g;
@@ -1276,6 +1297,15 @@ static int BestCellNear(float x0, float y0, float x1, float y1, float reach, lin
     return best;
 }
 
+// Does the tag belong to a lift that traps (SF_AVOID)? Its lines are not worth riding to.
+static int TagsAvoided(int tag)
+{
+    for (int s = 0; s < numsectors; s++)
+        if (sectors[s].tag == tag && (g_secFlags[s] & SF_AVOID))
+            return 1;
+    return 0;
+}
+
 static void SetRoute(int goal, const int* parent)
 {
     g_bestProgress = 0;
@@ -1291,16 +1321,34 @@ static void SetRoute(int goal, const int* parent)
     g_routeState = ROUTE_OK;
 }
 
+// A checksum of every floor and ceiling height: the grid is out of date when it changes.
+static unsigned SectorHeightsStamp(void)
+{
+    unsigned h = 2166136261u;
+    for (int s = 0; s < numsectors; s++)
+    {
+        h = (h ^ (unsigned)sectors[s].floorheight) * 16777619u;
+        h = (h ^ (unsigned)sectors[s].ceilingheight) * 16777619u;
+    }
+    return h;
+}
+
+static unsigned g_gridHeights;
+
+// Rebuild the grid if keys, triggered lines, the fallback, or any floor or ceiling has changed
+// since it was built (stairs, for one, can take longer to build than we wait for them).
 static void RebuildGridIfStale(void)
 {
     int keys = KeyMask();
-    if (keys == g_gridKeys && g_linesDone == g_gridLines && g_magic == g_gridMagic)
+    unsigned heights = SectorHeightsStamp();
+    if (keys == g_gridKeys && g_linesDone == g_gridLines && g_magic == g_gridMagic && heights == g_gridHeights)
         return;
     FreeLevel();
     BuildGrid();
     g_gridKeys = keys;
     g_gridLines = g_linesDone;
     g_gridMagic = g_magic;
+    g_gridHeights = heights;
 }
 
 static int AnythingMoving(void);
@@ -1358,7 +1406,8 @@ static void PlanTour(mobj_t* mo)
         for (int i = 0; i < numlines; i++)
         {
             line_t* l = &lines[i];
-            if (g_lineState[i] || !l->tag || !IsObjectiveSpecial(l->special) || IsGunSpecial(l->special))
+            if (g_lineState[i] || !l->tag || !IsObjectiveSpecial(l->special) || IsGunSpecial(l->special) ||
+                TagsAvoided(l->tag))
                 continue;
             int c = BestCellNear(l->v1->x / (float)FRACUNIT, l->v1->y / (float)FRACUNIT,
                                  l->v2->x / (float)FRACUNIT, l->v2->y / (float)FRACUNIT,
@@ -1371,8 +1420,9 @@ static void PlanTour(mobj_t* mo)
             }
         }
 
-    // 3. The wanted exit, else the other one.
-    for (int pass = 0; pass < 2 && goal < 0; pass++)
+    // 3. The wanted exit, else the other one; never while a boss level's bosses live.
+    int bossesLive = NearestBoss(mo, NULL) != NULL;
+    for (int pass = 0; pass < 2 && goal < 0 && !bossesLive; pass++)
     {
         int flag = pass ? CF_GOAL2 : CF_GOAL;
         for (int c = 0; c < cells; c++)
@@ -1469,7 +1519,8 @@ static int StartDetour(mobj_t* mo)
     int lo = (int)(DETOUR_MIN / CELL * 10), hi = (int)(DETOUR_MAX / CELL * 10);
     for (int c = 0; c < cells; c++)
     {
-        if (!closed[c] || cost[c] < lo || cost[c] > hi || (g_cellFlags[c] & (CF_NEAR | CF_HAZARD)))
+        if (!closed[c] || cost[c] < lo || cost[c] > hi || (g_cellFlags[c] & (CF_NEAR | CF_HAZARD)) ||
+            (g_secFlags[g_cellSector[c]] & SF_AVOID))
             continue;
         if (Dist2Cell(c, px, py) < DETOUR_MIN * DETOUR_MIN)
             continue;
@@ -2258,6 +2309,7 @@ void RIDE_BuildTiccmd(ticcmd_t* cmd)
         g_gridKeys = KeyMask();
         g_gridLines = 0;
         g_gridMagic = 0;
+        g_gridHeights = SectorHeightsStamp();
         g_builtLevel = g_level;
     }
     if (!enabled)
@@ -2304,9 +2356,14 @@ void RIDE_BuildTiccmd(ticcmd_t* cmd)
         {
             if (boss)
             {
+                RebuildGridIfStale();
                 MarkBossSpots();   // head for where the bosses are now
                 PlanRoute(mo, CF_BOSS);
                 g_objKind = OBJ_BOSS;
+                // No way to the bosses yet (E1M8 starts behind a switch): tour for keys and
+                // switches, and try the bosses again after each one.
+                if (g_routeState != ROUTE_OK)
+                    PlanTour(mo);
             }
             else
                 PlanTour(mo);
@@ -2324,7 +2381,7 @@ void RIDE_BuildTiccmd(ticcmd_t* cmd)
             return;
 
         // At the end of the approach with the bosses still out of sight: they have moved.
-        if (boss && g_progress >= g_routeLen - 2)
+        if (boss && g_objKind == OBJ_BOSS && g_progress >= g_routeLen - 2)
         {
             if (gametic - g_lastPlanTic > REPLAN_TICS)
                 g_routeState = ROUTE_NONE;

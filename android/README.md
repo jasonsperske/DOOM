@@ -99,6 +99,7 @@ How the route is planned (`app/src/main/cpp/ride.c`):
    - The detour ends on arrival or after 10 seconds.
    - An objective that causes three stalls is dropped.
    - If the next step needs a platform or floor moved again, the rider rides to that floor's repeatable switch or line and uses it.
+6. **Lifts that trap are avoided.** Some lifts are raised to their ceiling by walk-over or switch lines on their own edge (specials 5, 55, 56, 65, 91, 94): stepping on or off can lift the floor with the player on it, or seal the player inside. E1M5's booths and E1M7's pillar are examples. Routes treat these lifts as fixed at their current height, and every cell in one costs heavily, so they are used only if there is no other way. Their lines are never objectives, and detours never end in one.
 
 Pace and resistance come from soloton's bike library ([below](#bike-library)) 20 times a second. To check the bike's sensors on a real bike:
 
