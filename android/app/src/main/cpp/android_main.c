@@ -429,6 +429,12 @@ Java_dev_soloton_doom_DoomNative_nativePower(JNIEnv* env, jclass cls)
 }
 
 JNIEXPORT jint JNICALL
+Java_dev_soloton_doom_DoomNative_nativeRideObjective(JNIEnv* env, jclass cls)
+{
+    return RIDE_Objective();
+}
+
+JNIEXPORT jint JNICALL
 Java_dev_soloton_doom_DoomNative_nativeRideWeapon(JNIEnv* env, jclass cls)
 {
     return RIDE_Weapon();

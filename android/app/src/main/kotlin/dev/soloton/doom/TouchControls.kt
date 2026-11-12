@@ -435,6 +435,7 @@ class TouchControls(context: Context) : View(context) {
             riding -> {
                 lines += String.format(Locale.US, "POWER %.0f%%", DoomNative.nativePower() * 100f)
                 DoomNative.WEAPON_NAMES.getOrNull(DoomNative.nativeRideWeapon())?.let { lines += it }
+                DoomNative.objectiveLabel(DoomNative.nativeRideObjective())?.let { lines += "TO $it" }
             }
             rideEnabled -> lines += "NO ROUTE"
         }

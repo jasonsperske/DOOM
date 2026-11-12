@@ -53,10 +53,19 @@ To test on soloton's gen 1 emulator, run `scripts/gen1-emulator.sh` in the solot
 
 ## Ride mode
 
-When a level starts, the game plans a route from the player to the exit, then the bike drives:
+Each level is ridden as a tour, and the bike drives:
 
 - **Pedal to move.** Cadence sets the speed along the route: stop pedalling and you stop. Without a bike, hold **GO** instead (about 70 rpm).
-- **Doors open as you reach them,** locked or not. Lifts lower, and stairs and floors that a switch or trigger line would move are moved for you. The exit switch or line triggers when you arrive.
+- **The route takes in the level.** In order:
+  1. The nearest key you don't have yet; you pick it up by riding over it.
+  2. The nearest switch or walk-over line that opens doors or moves floors elsewhere; it triggers when you reach it.
+  3. The exit, once there's nothing left to collect or trigger.
+- **Secret exits so every level is played.** On E1M3 the route takes the secret exit to E1M9, whose exit returns to E1M4. E2M5, E3M6, E4M2 and DOOM II's MAP15 and MAP31 do the same.
+- **Doors and floors play fair.**
+  - An ordinary door opens as you reach it. A locked one opens only if you have its key.
+  - Doors and floors worked from elsewhere move only once their switch or line has been triggered.
+  - Lifts lower as you reach them.
+  - If the exit still can't be reached once nothing is left to do, doors and floors on the route are opened and moved for you (a key on a ledge just out of reach, say). The readout shows the next objective: TO RED KEY, TO SWITCH, TO EXIT and so on.
 - **You face the nearest monster you can see** and strafe, so you keep following the route while it is in your sights. With nothing in sight, you face along the route.
 - **Hold a finger on a monster to fire at it.** That also makes it your target until it dies or you let go.
 - **Pedal power picks your weapon.** Power runs from 0 to 100%: `speed x (0.4 + 0.6 x resistance)`, where speed is pace over 4.5 m/s (about 105 rpm), capped at 1.
@@ -77,8 +86,8 @@ When a level starts, the game plans a route from the player to the exit, then th
 How the route is planned (`app/src/main/cpp/ride.c`):
 
 1. The map is rasterised into 8-unit cells marking where the player's 30x30 box fits. Cells whose box touches a wall, a ledge too high to climb, a too-low ceiling or solid scenery are blocked.
-2. Doors are planned as open. Lifts and floors moved by switches or trigger lines (including staircases, built as `EV_BuildStairs` would) are planned anywhere in the range of heights they can reach.
-3. A* finds the route to the normal exit, falling back to the secret exit, or to a sector that ends the level (special 11). Teleporters count as links.
+2. Lifts are planned at any height they reach. Doors are planned open only if they are unlocked, you hold their key, or their line has been triggered. Floors moved by a triggered line that can still act (including staircases, built as `EV_BuildStairs` would) are planned at any height they can reach. The grid is rebuilt whenever a key is picked up or a line triggered.
+3. A flood fill (Dijkstra) from the player finds everything reachable, then picks the objective: the nearest key, otherwise the nearest worthwhile line (one that opens doors, moves floors or builds stairs; lines with the same action and tag count as one), otherwise the wanted exit, otherwise the other exit or a sector that ends the level (special 11). Teleporters count as links. After a line is triggered, the rider waits up to 10 seconds for its doors and floors to stop moving before planning again. Objectives that get the rider stuck three times, or that can't be reached from the end of their route, are dropped. Bosses are found with A*.
 4. Each tic, the player steers at the farthest route cell in a straight line. When blocked (usually by a monster), they sidestep, alternating sides each second. They re-plan when knocked off the route, teleported or stuck for 4 seconds; waiting for a lift or door doesn't count as stuck.
 
 Pace and resistance come from soloton's bike library ([below](#bike-library)) 20 times a second. To check the bike's sensors on a real bike:

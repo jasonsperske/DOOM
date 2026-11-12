@@ -49,6 +49,23 @@ object DoomNative {
     /** Pedal power, 0..1: pace scaled up by resistance. It picks the weapon in ride mode. */
     @JvmStatic external fun nativePower(): Float
 
+    /**
+     * What ride mode's route heads for: 1-3 blue/yellow/red key, 4 a switch, 5 the exit, 6 the
+     * secret exit, 7 the boss; plus 16 when doors and floors are being opened regardless.
+     */
+    @JvmStatic external fun nativeRideObjective(): Int
+
+    fun objectiveLabel(code: Int): String? = when (code and 15) {
+        1 -> "BLUE KEY"
+        2 -> "YELLOW KEY"
+        3 -> "RED KEY"
+        4 -> "SWITCH"
+        5 -> "EXIT"
+        6 -> "SECRET EXIT"
+        7 -> "BOSS"
+        else -> null
+    }
+
     /** The weapon ride mode has chosen (DOOM's weapontype_t), or -1 outside ride mode. */
     @JvmStatic external fun nativeRideWeapon(): Int
 
