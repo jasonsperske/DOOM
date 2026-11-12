@@ -71,7 +71,7 @@ rcsid[] = "$Id: g_game.c,v 1.8 1997/02/03 22:45:09 b1 Exp $";
 #include "g_game.h"
 
 
-#define SAVEGAMESIZE	0x2c000
+#define SAVEGAMESIZE	(0x2c000*(sizeof(void*)/4))
 #define SAVESTRINGSIZE	24
 
 
@@ -1281,7 +1281,10 @@ void G_DoSaveGame (void)
 	sprintf (name,SAVEGAMENAME"%d.dsg",savegameslot); 
     description = savedescription; 
 	 
-    save_p = savebuffer = screens[1]+0x4000; 
+    if (sizeof(void*) > 4)
+	save_p = savebuffer = Z_Malloc (SAVEGAMESIZE + 0x4000, PU_STATIC, 0);
+    else
+	save_p = savebuffer = screens[1]+0x4000; 
 	 
     memcpy (save_p, description, SAVESTRINGSIZE); 
     save_p += SAVESTRINGSIZE; 
@@ -1310,6 +1313,8 @@ void G_DoSaveGame (void)
     if (length > SAVEGAMESIZE) 
 	I_Error ("Savegame buffer overrun"); 
     M_WriteFile (name, savebuffer, length); 
+    if (sizeof(void*) > 4)
+	Z_Free (savebuffer);
     gameaction = ga_nothing; 
     savedescription[0] = 0;		 
 	 

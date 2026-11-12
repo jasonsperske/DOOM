@@ -24,12 +24,18 @@
 #ifndef __DOOMTYPE__
 #define __DOOMTYPE__
 
+#include <stdint.h>
+
 
 #ifndef __BYTEBOOL__
 #define __BYTEBOOL__
 // Fixed to use builtin bool type with C++.
 #ifdef __cplusplus
 typedef bool boolean;
+#elif defined(__bool_true_false_are_defined)
+// <stdbool.h> was already included (some platform headers pull it in): false and
+// true are its macros, and an int keeps boolean the size of the enum below.
+typedef int boolean;
 #else
 typedef enum {false, true} boolean;
 #endif

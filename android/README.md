@@ -1,0 +1,86 @@
+# DOOM for the Peloton Bike (gen 1)
+
+An Android port of `linuxdoom-1.10` for the original Peloton Bike's tablet: Android 7.0 (API 24), 1920x1080 landscape, MediaTek MT8173. It runs on any Android 7.0+ device. Touch controls for now; bike input (cadence, resistance) comes later.
+
+The build setup follows [soloton](https://github.com/jasonsperske/soloton): the same toolchain, `minSdk 24`, and an APK for sideloading.
+
+## Build
+
+You need JDK 17+, the Android SDK, **NDK 29.0.14206865** and **CMake 3.31.6**. With soloton's toolchain:
+
+```bash
+. ~/.local/share/soloton-toolchain/env.sh
+sdkmanager "ndk;29.0.14206865" "cmake;3.31.6"     # once
+cd android
+echo "sdk.dir=$ANDROID_HOME" > local.properties   # once, if ANDROID_HOME is not set
+./gradlew :app:assembleDebug
+```
+
+The output is `app/build/outputs/apk/debug/app-debug.apk`, with `arm64-v8a` and `armeabi-v7a` for the bike and `x86_64` for the emulator.
+
+## Install and add a WAD
+
+DOOM needs game data (an IWAD), which is not included. Use one of the names the 1997 engine looks for, in lower case: `doom1.wad` (shareware), `doom.wad`, `doomu.wad`, `doom2.wad`, `plutonia.wad`, `tnt.wad`. Put it in either folder:
+
+- `/sdcard/Android/data/dev.soloton.doom/files/` (no permission needed), or
+- `/sdcard/Doom/` (the app asks for storage access).
+
+```bash
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb shell mkdir -p /sdcard/Android/data/dev.soloton.doom/files
+adb push doom1.wad /sdcard/Android/data/dev.soloton.doom/files/
+```
+
+[Freedoom](https://freedoom.github.io/)'s `freedoom1.wad`, renamed to `doom.wad`, also works.
+
+With no WAD, the app shows these instructions instead. To pass DOOM command-line arguments while testing:
+
+```bash
+adb shell am start -n dev.soloton.doom/.DoomActivity --es args "-warp 1 3 -skill 4"
+```
+
+To test on soloton's gen 1 emulator, run `scripts/gen1-emulator.sh` in the soloton repo, then install as above.
+
+## Controls
+
+| Control | In the game | In menus |
+|---|---|---|
+| Stick (touch anywhere on the left) | Up/down walks, left/right strafes, push to the rim to run | Arrow keys, repeating while held |
+| Drag anywhere else | Turn | |
+| FIRE (bottom right) | Fire; drag on it to turn while firing | OK (Enter); also answers "yes" in prompts |
+| USE | Open doors, press switches | BACK |
+| MENU / MAP | Esc / automap | Esc |
+| 1-7 (right edge) | Weapons | hidden |
+
+Hardware keyboards and the Back key also work. Back opens and closes the menu.
+
+Leaving the app pauses the game and opens the menu, so you never come back mid-fight.
+
+## How it works
+
+`app/src/main/cpp/` replaces the Linux/X11 platform layer (`i_main.c`, `i_video.c`, `i_sound.c`, `i_system.c`, `i_net.c`). The rest of `linuxdoom-1.10/` compiles unchanged except for portability fixes.
+
+| File | Role |
+|---|---|
+| `android_main.c` | JNI bridge: runs `D_DoomMain` on its own thread, queues input for `I_StartTic`, hands over the surface, handles pause/resume, sends stdout to logcat (tag `DOOM`) |
+| `i_video_android.c` | Converts the 320x200 paletted frame and scales it (nearest neighbour) into the `SurfaceView` buffer. The view is 4:3 and centred, so 1440x1080 on the bike |
+| `i_sound_android.c` | Sound effects mixed in an OpenSL ES callback (44.1 kHz stereo) |
+| `i_system_android.c` | Timer that ignores time spent paused, 32 MB zone heap, `I_Error`/`I_Quit` call back to Kotlin |
+| `i_net_android.c` | Single player only |
+
+Changes to the engine sources in `linuxdoom-1.10/`:
+
+- **64-bit:** pointer arrays allocated at 4 bytes per entry (`r_data.c`, `p_setup.c`); a pointer field in the on-disk `maptexture_t`; pointer-to-`int` casts (`r_data.c`, `r_draw.c`, `z_zone.c`, `p_saveg.c`, `d_net.c`); string config defaults stored in `int`s (`m_misc.c`); zone blocks aligned to 8 bytes; savegames built in their own buffer instead of `screens[1]`, which 64-bit structs overflow (`g_game.c`).
+- **ARM:** built with `-fsigned-char`, because `ticcmd_t`'s movement fields are plain `char`.
+- **Bionic:** no `<values.h>`; `boolean` coexists with `<stdbool.h>`.
+- **Touch (`__ANDROID__` only):** Enter answers "yes" in prompts, an empty save slot gets a default name, the tic loop sleeps instead of spinning, and 8 sound channels by default.
+
+## Not done yet
+
+- Music (MUS needs a MIDI synth)
+- Bike input
+- Multiplayer
+- `-iwad` and other WAD names
+- On-screen keyboard for save names
+- Release signing (release builds use the debug key)
+- Testing on a real bike: so far it has only run on the gen 1 emulator (x86_64, software rendering)

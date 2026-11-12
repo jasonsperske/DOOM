@@ -650,6 +650,11 @@ void M_SaveSelect(int choice)
     strcpy(saveOldString,savegamestrings[choice]);
     if (!strcmp(savegamestrings[choice],EMPTYSTRING))
 	savegamestrings[choice][0] = 0;
+#ifdef __ANDROID__
+    // Touch has no keyboard: give an empty slot a name so Enter saves.
+    if (!savegamestrings[choice][0])
+	sprintf(savegamestrings[choice], "SAVE %d", choice+1);
+#endif
     saveCharIndex = strlen(savegamestrings[choice]);
 }
 
@@ -1494,6 +1499,11 @@ boolean M_Responder (event_t* ev)
     // Take care of any messages that need input
     if (messageToPrint)
     {
+#ifdef __ANDROID__
+	// Touch has no 'y' key: the confirm button sends KEY_ENTER.
+	if (messageNeedsInput == true && ch == KEY_ENTER)
+	    ch = 'y';
+#endif
 	if (messageNeedsInput == true &&
 	    !(ch == ' ' || ch == 'n' || ch == 'y' || ch == KEY_ESCAPE))
 	    return false;

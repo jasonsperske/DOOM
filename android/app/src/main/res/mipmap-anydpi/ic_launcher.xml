@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Launcher icon (API 24 has no adaptive icons): a crosshair on a dark red rounded square. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <path android:fillColor="#FF5A0A0A" android:pathData="M10,2H38A8,8 0,0 1,46 10V38A8,8 0,0 1,38 46H10A8,8 0,0 1,2 38V10A8,8 0,0 1,10 2Z" />
+    <path android:strokeColor="#FFFFB347" android:strokeWidth="3" android:pathData="M24,10A14,14 0,1 1,23.99 10Z" />
+    <path android:strokeColor="#FFFFB347" android:strokeWidth="3" android:strokeLineCap="round"
+        android:pathData="M24,6V16M24,32V42M6,24H16M32,24H42" />
+    <path android:fillColor="#FFFFE0B0" android:pathData="M24,21.5A2.5,2.5 0,1 1,23.99 21.5Z" />
+</vector>
