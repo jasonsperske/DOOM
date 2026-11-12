@@ -35,6 +35,8 @@ adb push doom1.wad /sdcard/Android/data/dev.soloton.doom/files/
 
 [Freedoom](https://freedoom.github.io/)'s `freedoom1.wad`, renamed to `doom.wad`, also works.
 
+**Building the shareware WAD into the APK.** If `DOOM1.WAD` (or `doom1.wad`) is at the repository root, the build packs it into the APK. To use a different file, pass `-PembedWad=/path/to/doom1.wad`. On first run, if no other IWAD is installed, the app copies it to private storage and plays it, so the APK works with no setup. WADs stay out of git. Give such an APK only to people allowed to have the WAD: the shareware licence covers passing on the shareware version unmodified and for free.
+
 With no WAD, the app shows these instructions instead. To pass DOOM command-line arguments while testing:
 
 ```bash

@@ -31,6 +31,7 @@ import java.io.File
  *
  * Needs an IWAD (doom1.wad, doom.wad, doomu.wad, doom2.wad, plutonia.wad or tnt.wad, lower case)
  * in the app's own folder, `/sdcard/Android/data/dev.soloton.doom/files`, or in `/sdcard/Doom`.
+ * An APK built with the shareware doom1.wad inside (see app/build.gradle.kts) falls back to that.
  *
  * The bike (via soloton's bike library) drives ride mode: its pace and resistance go to the engine
  * 20 times a second. Without a bike, the GO button stands in for pedalling.
@@ -90,7 +91,27 @@ class DoomActivity : Activity(), DoomNative.Listener, SurfaceHolder.Callback {
         File(Environment.getExternalStorageDirectory(), "Doom").takeIf { hasStoragePermission() },
     )
 
-    private fun findWadDir(): File? = wadFolders().firstOrNull { dir -> IWADS.any { File(dir, it).isFile } }
+    private fun findWadDir(): File? =
+        wadFolders().firstOrNull { dir -> IWADS.any { File(dir, it).isFile } } ?: extractEmbeddedWad()
+
+    /** The doom1.wad packed in the APK, if any, copied once to private storage. */
+    private fun extractEmbeddedWad(): File? {
+        val dir = File(filesDir, "embedded")
+        val wad = File(dir, "doom1.wad")
+        if (wad.isFile) return dir
+        return try {
+            assets.open("doom1.wad").use { input ->
+                dir.mkdirs()
+                val partial = File(dir, "doom1.wad.part")
+                partial.outputStream().use { input.copyTo(it) }
+                partial.renameTo(wad)
+            }
+            Log.i(TAG, "Using the shareware IWAD built into the APK")
+            dir
+        } catch (e: java.io.IOException) {
+            null   // not built in
+        }
+    }
 
     private fun hasStoragePermission() =
         checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
