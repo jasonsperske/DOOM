@@ -20,6 +20,7 @@ object DoomNative {
     const val UI_AUTOMAP = 8
     const val UI_DEMO = 16
     const val UI_RIDE = 32
+    const val UI_STATUSBAR = 64
 
     /** Starts the engine; false if it is already running. */
     @JvmStatic external fun nativeStart(args: Array<String>, wadDir: String, homeDir: String): Boolean

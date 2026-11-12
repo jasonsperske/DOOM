@@ -29,6 +29,8 @@ import kotlin.math.min
  * - Anywhere else: drag sideways to turn.
  * - FIRE and USE at the bottom right; dragging a finger on FIRE also turns.
  *
+ * In a level, tapping the face in the status bar opens the menu, as MENU does.
+ *
  * Always: MENU and MAP at the top left, the bike readout on the left. Weapons 1-7 down the right
  * edge except in ride mode.
  * In menus the stick sends arrow keys, FIRE becomes OK (Enter; also "yes" in prompts) and
@@ -210,7 +212,19 @@ class TouchControls(context: Context) : View(context) {
         else -> listOf(fire, use, menu, map) + weapons
     }
 
+    /** Is (x, y) on the status bar's face? */
+    private fun onFace(x: Float, y: Float): Boolean {
+        if (menuMode || uiState and DoomNative.UI_STATUSBAR == 0) return false
+        val fx = (x - gameLeft) / gameWidth * 320f
+        val fy = (y - gameTop) / gameHeight * 200f
+        return fx in FACE_LEFT..FACE_RIGHT && fy >= FACE_TOP
+    }
+
     private fun pointerDown(id: Int, x: Float, y: Float) {
+        if (onFace(x, y)) {
+            DoomNative.tapKey(DoomKeys.ESCAPE)
+            return
+        }
         val button = visibleButtons().firstOrNull { it.pointerId == -1 && it.contains(x, y) }
         if (button != null) {
             button.pointerId = id
@@ -452,6 +466,11 @@ class TouchControls(context: Context) : View(context) {
         const val MENU_FIRST_REPEAT_MS = 400L
         const val MENU_REPEAT_MS = 160L
         const val STATE_POLL_MS = 200L
+
+        // The face in the 320x200 frame (st_stuff.c draws it at 143,168), with a little slack.
+        const val FACE_LEFT = 138f
+        const val FACE_RIGHT = 182f
+        const val FACE_TOP = 166f
 
         /** DOOM mouse units per pixel at 1080 px tall: about 180 degrees across the game view. */
         const val TURN_PER_PIXEL = 5.5f

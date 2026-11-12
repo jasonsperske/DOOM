@@ -22,6 +22,7 @@
 extern boolean menuactive;
 extern int messageToPrint;
 extern boolean automapactive;
+extern int screenblocks;
 
 static JavaVM* g_vm;
 static jclass g_bridgeClass;   // dev.soloton.doom.DoomNative
@@ -376,6 +377,7 @@ Java_dev_soloton_doom_DoomNative_nativeSetPaused(JNIEnv* env, jclass cls, jboole
 #define UI_AUTOMAP   8
 #define UI_DEMO      16
 #define UI_RIDE      32
+#define UI_STATUSBAR 64   // the status bar (with the face) is on screen
 
 JNIEXPORT jint JNICALL
 Java_dev_soloton_doom_DoomNative_nativeUiState(JNIEnv* env, jclass cls)
@@ -393,6 +395,8 @@ Java_dev_soloton_doom_DoomNative_nativeUiState(JNIEnv* env, jclass cls)
         state |= UI_DEMO;
     if (RIDE_IsActive())
         state |= UI_RIDE;
+    if (gamestate == GS_LEVEL && (screenblocks < 11 || automapactive))
+        state |= UI_STATUSBAR;
     return state;
 }
 

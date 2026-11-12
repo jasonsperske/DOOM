@@ -96,6 +96,7 @@ In free mode (or ride mode's MENU and MAP; weapons are picked by pedal power the
 | FIRE (bottom right) | Fire; drag on it to turn while firing | OK (Enter); also answers "yes" in prompts |
 | USE | Open doors, press switches | BACK |
 | MENU / MAP | Esc / automap | Esc |
+| The face in the status bar | Opens the menu (in ride mode too) | |
 | 1-7 (right edge) | Weapons | hidden |
 
 Hardware keyboards and the Back key also work. Back opens and closes the menu.
