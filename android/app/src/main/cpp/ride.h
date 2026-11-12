@@ -6,6 +6,7 @@
 
 // UI thread
 void RIDE_SetEnabled(int enabled);
+void RIDE_SetAutofireRpm(float rpm);   // 0: by skill level
 void RIDE_SetBike(int live, float pace, float resistance);
 void RIDE_SetTouch(int down, float u, float v);   // u, v: 0..1 across the 320x200 frame
 
@@ -13,7 +14,9 @@ void RIDE_SetTouch(int down, float u, float v);   // u, v: 0..1 across the 320x2
 int RIDE_IsActive(void);
 float RIDE_Power(void);    // pedal power 0..1
 int RIDE_Weapon(void);
-int RIDE_Objective(void);   // what the route heads for: see RIDE_Objective in ride.c      // weapontype_t chosen by pedal power, or -1 outside ride mode
+int RIDE_Objective(void);
+float RIDE_AutofireRpm(void);   // the cadence that switches auto-fire on
+int RIDE_Autofiring(void);      // pedalling at or above it   // what the route heads for: see RIDE_Objective in ride.c      // weapontype_t chosen by pedal power, or -1 outside ride mode
 int RIDE_HasTarget(void);
 
 // Engine hooks (g_game.c, p_setup.c)

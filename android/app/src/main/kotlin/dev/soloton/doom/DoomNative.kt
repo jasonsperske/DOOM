@@ -46,12 +46,21 @@ object DoomNative {
     /** A finger on the game view, [u] and [v] 0..1 across it; held on a monster, it fires. */
     @JvmStatic external fun nativeRideTouch(down: Boolean, u: Float, v: Float)
 
+    /** Cadence at or above which ride mode fires at monsters on its own; 0 for the skill's default. */
+    @JvmStatic external fun nativeSetAutofireRpm(rpm: Float)
+
+    /** The auto-fire cadence in force (the setting, or the skill level's default). */
+    @JvmStatic external fun nativeAutofireRpm(): Float
+
+    /** Is the rider pedalling at or above the auto-fire cadence? */
+    @JvmStatic external fun nativeAutofiring(): Boolean
+
     /** Pedal power, 0..1: pace scaled up by resistance. It picks the weapon in ride mode. */
     @JvmStatic external fun nativePower(): Float
 
     /**
      * What ride mode's route heads for: 1-3 blue/yellow/red key, 4 a switch, 5 the exit, 6 the
-     * secret exit, 7 the boss; plus 16 when doors and floors are being opened regardless.
+     * secret exit, 7 the boss, 8 a detour after getting stuck; plus 16 when doors and floors are being opened regardless.
      */
     @JvmStatic external fun nativeRideObjective(): Int
 
@@ -63,6 +72,7 @@ object DoomNative {
         5 -> "EXIT"
         6 -> "SECRET EXIT"
         7 -> "BOSS"
+        8 -> "DETOUR"
         else -> null
     }
 

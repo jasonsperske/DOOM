@@ -39,6 +39,9 @@ import java.io.File
  * For testing without a bike, GO's stand-in pace (m/s) and resistance (0..1) can be set:
  * `--ef go_pace 4.5 --ef go_resistance 1`
  *
+ * The cadence that turns on auto-fire in ride mode defaults by skill level; set it with
+ * `--ef autofire_rpm 70` (remembered; 0 returns to the default).
+ *
  * Extra command-line arguments can be passed for testing:
  * `adb shell am start -n dev.soloton.doom/.DoomActivity --es args "-warp 1 1 -skill 3"`
  */
@@ -81,6 +84,16 @@ class DoomActivity : Activity(), DoomNative.Listener, SurfaceHolder.Callback {
         Log.i(TAG, "Starting with IWAD folder $wadDir, args $args")
         DoomNative.nativeStart(args.toTypedArray(), wadDir.absolutePath, filesDir.absolutePath)
         running = true
+        applyAutofireSetting()
+    }
+
+    /** The auto-fire cadence: from the launch intent if given there (and remembered), else saved. */
+    private fun applyAutofireSetting() {
+        val prefs = getSharedPreferences("ride", MODE_PRIVATE)
+        if (intent.hasExtra("autofire_rpm")) {
+            prefs.edit().putFloat("autofire_rpm", intent.getFloatExtra("autofire_rpm", 0f)).apply()
+        }
+        DoomNative.nativeSetAutofireRpm(prefs.getFloat("autofire_rpm", 0f))
     }
 
     // ---------------------------------------------------------------------------------------

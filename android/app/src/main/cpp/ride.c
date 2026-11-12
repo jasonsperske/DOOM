@@ -14,7 +14,8 @@
 //   line has been triggered. Lifts lower as the player reaches them. If the exit cannot be
 //   reached that way, doors and floors on the route are opened and moved regardless.
 // - Reaching the exit line or switch ends the level.
-// - Holding a finger on a monster's sprite targets it and fires.
+// - Holding a finger on a monster's sprite targets it and fires. Pedalling at or above the
+//   auto-fire cadence (by skill level, or set) fires at the nearest monster in sight on its own.
 // - Boss levels (E1M8 and the like, which end when the bosses die rather than at an exit): ride
 //   to the bosses, then circle the nearest at a distance, sidestepping their shots, until they
 //   are dead. Then ride on to the level's end: an exit, or the sector that ends it (E1M8's
@@ -57,7 +58,9 @@ extern int viewwindowx, viewwindowy;
 #define RIDE_TRACE      0       // 1: log position and progress once a second
 
 #define CELL            8       // grid cell size, map units
-#define CLEARANCE       15.0f   // half-size of the box kept clear of walls (the player's is 16)
+#define CLEARANCE       16.5f   // half-size of the box kept clear of walls (the player's is 16)
+#define NEAR_BAND       24.0f   // half-size of the box marking cells close to walls (CF_NEAR)
+#define NEAR_COST       6       // extra route cost per cell close to a wall
 #define MAX_STEP        24      // highest step the player climbs
 #define PLAYER_HEIGHT   56
 #define MAX_DROP_CELLS  3       // a drop off a ledge may skip this many blocked cells
@@ -86,6 +89,10 @@ extern int viewwindowx, viewwindowy;
 #define BOSS_KEEP_MAX   640.0f
 #define DODGE_TICS      40      // react to a shot arriving within this many tics
 #define DODGE_RADIUS    80.0f   // ... that would pass this close
+#define MPS_PER_RPM     0.042f  // the bike library's cadence-to-pace mapping (CadencePace)
+#define DETOUR_MIN      160.0f  // when stuck, detour to a random point this far ...
+#define DETOUR_MAX      640.0f  // ... up to this far (route distance), then plan again
+#define DETOUR_TICS     (10*TICRATE)  // give a detour up after this long
 
 // ---------------------------------------------------------------------------
 // Inputs from the UI thread
@@ -97,6 +104,8 @@ static float g_pace;          // metres per second
 static float g_resistance;    // 0..1
 static int g_touchDown;
 static float g_touchU, g_touchV;   // 0..1 across the 320x200 frame
+static float g_autofireRpm;        // auto-fire cadence set by the rider; 0 for the skill's default
+static int g_autofiring;           // pedalling fast enough to auto-fire; read by the UI
 static float g_power;              // 0..1 pedal power; written by the game thread, read by the UI
 static int g_weapon = -1;          // weapon ride mode has chosen, or -1; read by the UI
 static int g_tiers[8], g_numTiers;   // weapons from weakest to strongest in this game
@@ -117,6 +126,29 @@ void RIDE_SetBike(int live, float pace, float resistance)
     g_pace = pace < 0 ? 0 : pace;
     g_resistance = resistance < 0 ? 0 : resistance > 1 ? 1 : resistance;
     pthread_mutex_unlock(&g_inputLock);
+}
+
+void RIDE_SetAutofireRpm(float rpm)
+{
+    pthread_mutex_lock(&g_inputLock);
+    g_autofireRpm = rpm < 0 ? 0 : rpm;
+    pthread_mutex_unlock(&g_inputLock);
+}
+
+// The cadence that switches auto-fire on: the rider's setting, else by skill (harder skills ask
+// for faster pedalling).
+float RIDE_AutofireRpm(void)
+{
+    static const float bySkill[] = { 45, 55, 65, 75, 85 };   // sk_baby .. sk_nightmare
+    if (g_autofireRpm > 0)
+        return g_autofireRpm;
+    int skill = gameskill < 0 ? 2 : gameskill > 4 ? 4 : gameskill;
+    return bySkill[skill];
+}
+
+int RIDE_Autofiring(void)
+{
+    return g_autofiring;
 }
 
 void RIDE_SetTouch(int down, float u, float v)
@@ -140,7 +172,7 @@ static short* g_cellSector;          // sector index per cell
 static int* g_secFlags;              // SF_* per sector
 static fixed_t* g_secLowFloor;       // lowest the floor can go (lifts, lowering floors)
 static fixed_t* g_secHighFloor;      // highest the floor can go (stairs, raising floors)
-#define MAX_MOVERS 4
+#define MAX_MOVERS 16
 static int (*g_secMovers)[MAX_MOVERS]; // lines whose action moves the sector's floor, or -1
 static int* g_secLock;               // key colour a manual door needs (0 blue, 1 yellow, 2 red), or -1
 static fixed_t* g_secOpenCeiling;    // highest the ceiling can go (doors)
@@ -152,6 +184,7 @@ static fixed_t* g_secOpenCeiling;    // highest the ceiling can go (doors)
 #define CF_TELE    16  // a teleporter line starts here
 #define CF_BOSS    32  // near where a boss started: the approach route's goal
 #define CF_GOAL2   64  // near the other exit (normal if the secret one is wanted, or the reverse)
+#define CF_NEAR    128 // close to a wall: routes avoid it, straight-line shortcuts may not cross it
 
 #define SF_LIFT    1
 #define SF_HAZARD  2
@@ -192,7 +225,7 @@ static int g_level;          // bumped by RIDE_LevelLoaded so the game thread re
 static int g_builtLevel = -1;
 
 // The tour (per level, kept across grid rebuilds)
-enum { OBJ_NONE, OBJ_KEY, OBJ_LINE, OBJ_EXIT, OBJ_BOSS };
+enum { OBJ_NONE, OBJ_KEY, OBJ_LINE, OBJ_EXIT, OBJ_BOSS, OBJ_DETOUR };
 #define LINE_DONE      1
 #define LINE_ABANDONED 2
 static byte* g_lineState;    // per line: LINE_DONE once triggered, LINE_ABANDONED if unreachable
@@ -209,12 +242,18 @@ static int g_objColor;       // OBJ_KEY: its colour
 static int g_objExitFlag;    // OBJ_EXIT: CF_GOAL or CF_GOAL2
 static int g_objStucks;      // times stuck while heading for this objective
 static int g_objArrivedTic = -1;   // reached the end of the route without completing it
+static int g_detourUntil;    // OBJ_DETOUR: when to stop and plan again
+static int g_savedKind, g_savedLine, g_savedColor;   // the objective a detour interrupted
+static mobj_t* g_savedKey;
+static unsigned g_rideSeed = 0x9e3779b9u;   // our own random numbers: DOOM's affect demo sync
 static int g_exited;         // the exit has been triggered this level
 static mobj_t* g_target;
 static int g_targetTapped;
 static int g_targetUnseen;
 static int g_stuckTics;
 static int g_nudgeSign = 1;  // which way to sidestep something blocking the route
+static int g_bestProgress;   // furthest route cell reached, and when: no progress for long is stuck
+static int g_bestProgressTic;
 static fixed_t g_stuckX, g_stuckY;
 
 static int CellIndex(int cx, int cy) { return cy * g_gridW + cx; }
@@ -743,6 +782,7 @@ static void BuildGrid(void)
         if (!l->backsector || (l->flags & ML_BLOCKING))
         {
             MarkNearLine(l, CLEARANCE, CF_WALL, -1);
+            MarkNearLine(l, NEAR_BAND, CF_NEAR, -1);
             continue;
         }
 
@@ -753,14 +793,23 @@ static void BuildGrid(void)
         fixed_t floor = loF > loB ? loF : loB;
 
         if (ceil - floor < PLAYER_HEIGHT * FRACUNIT)
+        {
             MarkNearLine(l, CLEARANCE, CF_WALL, -1);       // never enough headroom
+            MarkNearLine(l, NEAR_BAND, CF_NEAR, -1);
+        }
         else
         {
             // Too high to climb from the low side; the high side can still drop down.
             if (loB - hiF > MAX_STEP * FRACUNIT)
+            {
                 MarkNearLine(l, CLEARANCE, CF_LEDGE, 1);
+                MarkNearLine(l, NEAR_BAND, CF_NEAR, 1);
+            }
             if (loF - hiB > MAX_STEP * FRACUNIT)
+            {
                 MarkNearLine(l, CLEARANCE, CF_LEDGE, 0);
+                MarkNearLine(l, NEAR_BAND, CF_NEAR, 0);
+            }
         }
     }
 
@@ -773,16 +822,20 @@ static void BuildGrid(void)
         if (!(mo->flags & MF_SOLID) || (mo->flags & MF_COUNTKILL) || mo->player)
             continue;
         float r = mo->radius / (float)FRACUNIT + CLEARANCE;
+        float near = mo->radius / (float)FRACUNIT + NEAR_BAND;
         float mx = mo->x / (float)FRACUNIT, my = mo->y / (float)FRACUNIT;
-        int c0 = CellAt(mx - r, my - r), c1 = CellAt(mx + r, my + r);
+        int c0 = CellAt(mx - near, my - near), c1 = CellAt(mx + near, my + near);
         if (c0 < 0 || c1 < 0)
             continue;
         for (int cy = c0 / g_gridW; cy <= c1 / g_gridW; cy++)
             for (int cx = c0 % g_gridW; cx <= c1 % g_gridW; cx++)
             {
                 int c = CellIndex(cx, cy);
-                if (fabsf(CellX(c) - mx) < r && fabsf(CellY(c) - my) < r)
+                float dx = fabsf(CellX(c) - mx), dy = fabsf(CellY(c) - my);
+                if (dx < r && dy < r)
                     g_cellFlags[c] |= CF_WALL;
+                if (dx < near && dy < near)
+                    g_cellFlags[c] |= CF_NEAR;
             }
     }
 
@@ -1030,7 +1083,8 @@ static int Search(int start, int goalFlag, int* cost, int* parent, byte* closed)
                     if (steps == 1)
                         continue;
             }
-            int g = cost[c] + dirs[d][2] * steps + ((g_cellFlags[n] & CF_HAZARD) ? HAZARD_COST : 0);
+            int g = cost[c] + dirs[d][2] * steps + ((g_cellFlags[n] & CF_HAZARD) ? HAZARD_COST : 0) +
+                    ((g_cellFlags[n] & CF_NEAR) ? NEAR_COST : 0);
             if (g < cost[n])
             {
                 cost[n] = g;
@@ -1224,6 +1278,8 @@ static int BestCellNear(float x0, float y0, float x1, float y1, float reach, lin
 
 static void SetRoute(int goal, const int* parent)
 {
+    g_bestProgress = 0;
+    g_bestProgressTic = gametic;
     int len = 0;
     for (int c = goal; c != -1; c = parent[c])
         len++;
@@ -1249,6 +1305,7 @@ static void RebuildGridIfStale(void)
 
 static int AnythingMoving(void);
 static int g_planHoldUntil;
+static int g_holdingSince = -1;    // first tic we held off falling back because things moved
 
 static void PlanTour(mobj_t* mo)
 {
@@ -1329,6 +1386,8 @@ static void PlanTour(mobj_t* mo)
     }
 
     if (goal >= 0)
+        g_holdingSince = -1;
+    if (goal >= 0)
     {
         SetRoute(goal, parent);
         switch (g_objKind)
@@ -1346,9 +1405,15 @@ static void PlanTour(mobj_t* mo)
                  (g_objExitFlag == CF_GOAL) == g_preferSecret ? "secret" : "normal", cost[goal] * CELL / 10);
         }
     }
-    else if (!g_magic && AnythingMoving())
+    else if (!g_magic && AnythingMoving() && (g_holdingSince < 0 || gametic - g_holdingSince < 5 * TICRATE))
     {
-        // Doors or floors still moving: what can be reached may change. Look again shortly.
+        // Doors or floors still moving: what can be reached may change. Look again shortly, for
+        // up to 5 seconds (monsters opening doors can keep something moving for ever).
+        if (g_holdingSince < 0)
+        {
+            g_holdingSince = gametic;
+            LOGI("Ride: nothing reachable yet; waiting for doors and floors to stop");
+        }
         g_routeState = ROUTE_NONE;
         g_planHoldUntil = gametic + TICRATE;
     }
@@ -1379,6 +1444,63 @@ static void AbandonObjective(const char* why)
     g_routeState = ROUTE_NONE;
 }
 
+static int RideRandom(void)
+{
+    g_rideSeed = g_rideSeed * 1103515245u + 12345u;
+    return (g_rideSeed >> 16) & 0x7fff;
+}
+
+// Stuck: ride to a random reachable point a little way off, clear of walls and away from here,
+// then plan again (CheckObjective ends the detour). False if there is nowhere to go.
+static int StartDetour(mobj_t* mo)
+{
+    float px = mo->x / (float)FRACUNIT, py = mo->y / (float)FRACUNIT;
+    int start = NearestWalkable(px, py);
+    if (start < 0)
+        return 0;
+    int cells = g_gridW * g_gridH;
+    int* cost = malloc(cells * sizeof(int));
+    int* parent = malloc(cells * sizeof(int));
+    byte* closed = malloc(cells);
+    Search(start, 0, cost, parent, closed);
+
+    // A random pick among the candidates (reservoir sampling).
+    int pick = -1, seen = 0;
+    int lo = (int)(DETOUR_MIN / CELL * 10), hi = (int)(DETOUR_MAX / CELL * 10);
+    for (int c = 0; c < cells; c++)
+    {
+        if (!closed[c] || cost[c] < lo || cost[c] > hi || (g_cellFlags[c] & (CF_NEAR | CF_HAZARD)))
+            continue;
+        if (Dist2Cell(c, px, py) < DETOUR_MIN * DETOUR_MIN)
+            continue;
+        if (RideRandom() % ++seen == 0)
+            pick = c;
+    }
+
+    if (pick >= 0)
+    {
+        if (g_objKind != OBJ_DETOUR)
+        {
+            g_savedKind = g_objKind;
+            g_savedLine = g_objLine;
+            g_savedKey = g_objKey;
+            g_savedColor = g_objColor;
+        }
+        free(g_route);
+        g_route = NULL;
+        SetRoute(pick, parent);
+        g_objKind = OBJ_DETOUR;
+        g_objArrivedTic = -1;
+        g_detourUntil = gametic + DETOUR_TICS;
+        g_lastPlanTic = gametic;
+        LOGI("Ride: detour to (%.0f,%.0f), %d units, then plan again", CellX(pick), CellY(pick), cost[pick] * CELL / 10);
+    }
+    free(cost);
+    free(parent);
+    free(closed);
+    return pick >= 0;
+}
+
 static int g_settleLine = -1;      // a line just triggered: wait while its sectors move
 static int g_settleUntil;
 static int g_objSpecial;           // the objective line's special as it was triggered
@@ -1403,6 +1525,16 @@ static int AnythingMoving(void)
 // Did we just reach the objective? Keys are picked up by touching them; lines are triggered here.
 static void CheckObjective(mobj_t* mo)
 {
+    if (g_objKind == OBJ_DETOUR)
+    {
+        if (g_progress >= g_routeLen - 2 || gametic > g_detourUntil)
+        {
+            LOGI("Ride: detour over, planning again");
+            g_objKind = OBJ_NONE;
+            g_routeState = ROUTE_NONE;
+        }
+        return;
+    }
     if (g_objKind == OBJ_KEY && HasKey(g_objColor))
     {
         LOGI("Ride: got the key");
@@ -1488,6 +1620,9 @@ static int IsTeleportHop(int i)
 }
 
 // Straight walk across walkable cells from (x0,y0) to (x1,y1)?
+// Can the player steer straight from (x0,y0) to (x1,y1)? Every cell on the way must be walkable,
+// and away from walls: a shortcut that brushes a wall catches the player's corner on it. Cells
+// near either end may be close to a wall (the player and the route are often there).
 static int ClearPath(float x0, float y0, float x1, float y1)
 {
     float d = sqrtf(Dist2(x0, y0, x1, y1));
@@ -1498,6 +1633,8 @@ static int ClearPath(float x0, float y0, float x1, float y1)
         float t = (float)i / steps;
         int c = CellAt(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t);
         if (!Walkable(c) || (prev >= 0 && c != prev && !StepAllowed(prev, c)))
+            return 0;
+        if ((g_cellFlags[c] & CF_NEAR) && d * t > CELL * 1.5f && d * (1 - t) > CELL * 1.5f)
             return 0;
         prev = c;
     }
@@ -1619,6 +1756,83 @@ static void LowerLift(sector_t* sec)
     P_AddActivePlat(plat);
 }
 
+// Can the player not step from sector a to sector b as things are now?
+static int BlockedStep(int a, int b)
+{
+    sector_t* sa = &sectors[a];
+    sector_t* sb = &sectors[b];
+    fixed_t ceil = sa->ceilingheight < sb->ceilingheight ? sa->ceilingheight : sb->ceilingheight;
+    fixed_t floor = sa->floorheight > sb->floorheight ? sa->floorheight : sb->floorheight;
+    // A closed door ahead is opened elsewhere; only floors count here.
+    if (sb->ceilingheight - sb->floorheight < PLAYER_HEIGHT * FRACUNIT)
+        return 0;
+    return sb->floorheight - sa->floorheight > MAX_STEP * FRACUNIT || ceil - floor < PLAYER_HEIGHT * FRACUNIT;
+}
+
+static void SetRoute(int goal, const int* parent);
+static int BestCellNear(float x0, float y0, float x1, float y1, float reach, line_t* frontOf,
+                        const int* cost, const byte* closed);
+static float LineReach(line_t* l);
+
+// Route to within reach of a line (it is triggered on arrival, see CheckObjective).
+static void RouteToLine(mobj_t* mo, int line)
+{
+    line_t* l = &lines[line];
+    int cells = g_gridW * g_gridH;
+    int start = NearestWalkable(mo->x / (float)FRACUNIT, mo->y / (float)FRACUNIT);
+    free(g_route);
+    g_route = NULL;
+    g_routeLen = 0;
+    g_routeState = ROUTE_FAILED;
+    g_objArrivedTic = -1;
+    g_lastPlanTic = gametic;
+    if (start < 0)
+        return;
+    int* cost = malloc(cells * sizeof(int));
+    int* parent = malloc(cells * sizeof(int));
+    byte* closed = malloc(cells);
+    Search(start, 0, cost, parent, closed);
+    int goal = BestCellNear(l->v1->x / (float)FRACUNIT, l->v1->y / (float)FRACUNIT,
+                            l->v2->x / (float)FRACUNIT, l->v2->y / (float)FRACUNIT,
+                            LineReach(l) - 4, IsWalkSpecial(l->special) ? NULL : l, cost, closed);
+    if (goal >= 0)
+        SetRoute(goal, parent);
+    else
+    {
+        LOGI("Ride: can't reach line %d", line);
+        g_objKind = OBJ_NONE;
+        g_routeState = ROUTE_NONE;
+    }
+    free(cost);
+    free(parent);
+    free(closed);
+}
+
+// Does a floor special lower (-1) or raise (+1) the floor?
+static int FloorDirection(int special)
+{
+    switch (special)
+    {
+      case 19: case 23: case 36: case 37: case 38: case 45: case 60: case 70: case 71: case 82:
+      case 83: case 84: case 98: case 102:
+        return -1;
+    }
+    return IsFloorMoverSpecial(special) || StairStep(special) ? 1 : 0;
+}
+
+// A line that can move sector s's floor in direction dir again: repeatable (its special is still
+// set), and worked by walking over or using it. -1 if none.
+static int RepeatableMover(int s, int dir)
+{
+    for (int k = 0; k < MAX_MOVERS && g_secMovers[s][k] >= 0; k++)
+    {
+        line_t* l = &lines[g_secMovers[s][k]];
+        if (l->special && !IsGunSpecial(l->special) && FloorDirection(l->special) == dir)
+            return g_secMovers[s][k];
+    }
+    return -1;
+}
+
 // Trigger the lines that move a sector's floor, each once, as the player would.
 static void TriggerMovers(int s, mobj_t* mo)
 {
@@ -1667,6 +1881,30 @@ static void OpenTheWay(mobj_t* mo)
             sec->floorheight < here->floorheight - MAX_STEP * FRACUNIT &&
             !ClearPath(mo->x / (float)FRACUNIT, mo->y / (float)FRACUNIT, CellX(g_route[i]), CellY(g_route[i])))
             LowerLift(here);           // riding a raised lift down
+
+        // A step the player can't make (too high, or no headroom between the floors and ceilings):
+        // work a repeatable line that moves the floor we are on, or the one ahead, the right way,
+        // the way a player rides a platform with its switch.
+        if (!g_magic && s != prev && BlockedStep(prev, s))
+        {
+            int line = -1;
+            if (sectors[prev].floorheight > sec->floorheight)
+                line = RepeatableMover(prev, -1);           // lower the floor we are on
+            else
+            {
+                line = RepeatableMover(s, -1);              // lower the one ahead
+                if (line < 0)
+                    line = RepeatableMover(prev, 1);        // or raise ours to meet it
+            }
+            if (line >= 0 && !(g_objKind == OBJ_LINE && g_objLine == line))
+            {
+                LOGI("Ride: the way on needs line %d (special %d) again", line, lines[line].special);
+                g_objKind = OBJ_LINE;
+                g_objLine = line;
+                RouteToLine(mo, line);
+                return;
+            }
+        }
 
         // Fallback only: a step too high, so raise the floor we are on (stairs) or lower the one
         // ahead by triggering the line that moves it.
@@ -1924,8 +2162,6 @@ static void ChooseWeapon(player_t* player)
     if (player->readyweapon != weapon && player->pendingweapon != weapon &&
         gametic - g_lastSwitchTic > SWITCH_TICS)
     {
-        LOGI("Ride: weapon %d (power %.2f, tier %d%s)", weapon, g_power, tier,
-             g_tiers[tier] == wp_missile && weapon != wp_missile ? ", too close for rockets" : "");
         player->pendingweapon = weapon;
         g_lastSwitchTic = gametic;
     }
@@ -1960,6 +2196,7 @@ int RIDE_Objective(void)
       case OBJ_LINE: code = 4; break;                                    // a switch or trigger line
       case OBJ_EXIT: code = (g_objExitFlag == CF_GOAL) == g_preferSecret ? 6 : 5; break;   // 6: secret
       case OBJ_BOSS: code = 7; break;
+      case OBJ_DETOUR: code = 8; break;
     }
     if (g_fighting)
         code = 7;
@@ -2176,9 +2413,11 @@ void RIDE_BuildTiccmd(ticcmd_t* cmd)
     cmd->sidemove = (signed char)Clamp(side, -MAX_MOVE, MAX_MOVE);
     cmd->angleturn = (short)turn;
 
-    // Fire while the rider holds a monster, once roughly facing it.
+    // Fire while the rider holds a monster, or at any monster in sight while pedalling at the
+    // auto-fire cadence, once roughly facing it.
+    g_autofiring = pace / MPS_PER_RPM >= RIDE_AutofireRpm();
     cmd->buttons &= ~BT_ATTACK;
-    if (touchDown && g_target && g_targetTapped)
+    if (g_target && ((touchDown && g_targetTapped) || (g_autofiring && P_CheckSight(mo, g_target))))
     {
         int off = (int)(faceAngle - mo->angle);
         if (off < 0) off = -off;
@@ -2196,6 +2435,22 @@ void RIDE_BuildTiccmd(ticcmd_t* cmd)
         waiting |= sectors[g_cellSector[g_route[g_progress + 4]]].specialdata != NULL;
     if (waiting)
         g_stuckTics = 0;
+    // Pedalling but getting no further along the route (bumping back and forth against something):
+    // treat it as stuck too.
+    if (g_routeState == ROUTE_OK && g_progress > g_bestProgress)
+    {
+        g_bestProgress = g_progress;
+        g_bestProgressTic = gametic;
+    }
+    if (speed == 0 || waiting || g_fighting)
+        g_bestProgressTic = gametic;
+    if (gametic - g_bestProgressTic > 2 * STUCK_TICS)
+    {
+        g_bestProgressTic = gametic;
+        g_stuckTics = STUCK_TICS * 2 + 1;   // let the stuck handling below take it
+        g_stuckX = mo->x;
+        g_stuckY = mo->y;
+    }
     if (speed > 0 && !g_fighting)
     {
         if (abs(mo->x - g_stuckX) + abs(mo->y - g_stuckY) > 8 * FRACUNIT)
@@ -2209,8 +2464,20 @@ void RIDE_BuildTiccmd(ticcmd_t* cmd)
             int ahead = g_route[g_progress + 3 < g_routeLen ? g_progress + 3 : g_routeLen - 1];
             sector_t* hs = mo->subsector->sector;
             sector_t* as = &sectors[g_cellSector[ahead]];
-            if (++g_objStucks >= 3 && g_objKind != OBJ_EXIT && g_objKind != OBJ_BOSS)
+            // The objective being worked towards (a detour is only a means to it).
+            if (g_objKind == OBJ_DETOUR)
+            {
+                g_objKind = g_savedKind;
+                g_objLine = g_savedLine;
+                g_objKey = g_savedKey;
+                g_objColor = g_savedColor;
+            }
+            int abandoned = 0;
+            if (++g_objStucks >= 3 && (g_objKind == OBJ_KEY || g_objKind == OBJ_LINE))
+            {
                 AbandonObjective("stuck on the way");
+                abandoned = 1;
+            }
             LOGI("Ride: stuck at (%d,%d) sector %d floor %d ceil %d; heading for (%.0f,%.0f) sector %d "
                  "floor %d ceil %d tag %d moving %d; planning again",
                  mo->x >> FRACBITS, mo->y >> FRACBITS, SectorIndex(hs), hs->floorheight >> FRACBITS,
@@ -2218,6 +2485,8 @@ void RIDE_BuildTiccmd(ticcmd_t* cmd)
                  as->floorheight >> FRACBITS, as->ceilingheight >> FRACBITS, as->tag, as->specialdata != NULL);
             g_stuckTics = 0;
             g_routeState = ROUTE_NONE;
+            if (!abandoned && !g_fighting && StartDetour(mo))
+                g_routeState = ROUTE_OK;
         }
     }
 }

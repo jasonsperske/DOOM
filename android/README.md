@@ -68,6 +68,11 @@ Each level is ridden as a tour, and the bike drives:
   - If the exit still can't be reached once nothing is left to do, doors and floors on the route are opened and moved for you (a key on a ledge just out of reach, say). The readout shows the next objective: TO RED KEY, TO SWITCH, TO EXIT and so on.
 - **You face the nearest monster you can see** and strafe, so you keep following the route while it is in your sights. With nothing in sight, you face along the route.
 - **Hold a finger on a monster to fire at it.** That also makes it your target until it dies or you let go.
+- **Pedal fast enough and you fire on your own.** At or above the auto-fire cadence, you fire at the nearest monster in sight as soon as you're facing it, with the same rule for rockets.
+  - The cadence defaults by skill: 45 rpm on I'm Too Young To Die, then 55, 65 (Hurt Me Plenty), 75, and 85 on Nightmare.
+  - Cadence is taken from the bike's smoothed pace; GO counts as about 71 rpm.
+  - Set your own with `adb shell am start -n dev.soloton.doom/.DoomActivity --ef autofire_rpm 70`. It's remembered; `0` returns to the default.
+  - The readout shows AUTOFIRE ON, or the cadence needed.
 - **Pedal power picks your weapon.** Power runs from 0 to 100%: `speed x (0.4 + 0.6 x resistance)`, where speed is pace over 4.5 m/s (about 105 rpm), capped at 1.
   - Power is split evenly across the game's weapons, weakest first: pistol, shotgun, super shotgun (DOOM II), chaingun, rocket launcher, then plasma rifle and BFG (not in shareware). In shareware, under 25% is the pistol and 75% or more is rockets.
   - You get the weapon whether or not you have picked it up. Stop pedalling and you're down to the pistol.
@@ -88,7 +93,12 @@ How the route is planned (`app/src/main/cpp/ride.c`):
 1. The map is rasterised into 8-unit cells marking where the player's 30x30 box fits. Cells whose box touches a wall, a ledge too high to climb, a too-low ceiling or solid scenery are blocked.
 2. Lifts are planned at any height they reach. Doors are planned open only if they are unlocked, you hold their key, or their line has been triggered. Floors moved by a triggered line that can still act (including staircases, built as `EV_BuildStairs` would) are planned at any height they can reach. The grid is rebuilt whenever a key is picked up or a line triggered.
 3. A flood fill (Dijkstra) from the player finds everything reachable, then picks the objective: the nearest key, otherwise the nearest worthwhile line (one that opens doors, moves floors or builds stairs; lines with the same action and tag count as one), otherwise the wanted exit, otherwise the other exit or a sector that ends the level (special 11). Teleporters count as links. After a line is triggered, the rider waits up to 10 seconds for its doors and floors to stop moving before planning again. Objectives that get the rider stuck three times, or that can't be reached from the end of their route, are dropped. Bosses are found with A*.
-4. Each tic, the player steers at the farthest route cell in a straight line. When blocked (usually by a monster), they sidestep, alternating sides each second. They re-plan when knocked off the route, teleported or stuck for 4 seconds; waiting for a lift or door doesn't count as stuck.
+4. Each tic, the player steers at the farthest route cell that is in a straight line and doesn't brush a wall. When blocked (usually by a monster), they sidestep, alternating sides each second. They re-plan when knocked off the route or teleported.
+5. **Getting unstuck.** The rider counts as stuck after 4 seconds without moving, or 8 seconds pedalling without getting further along the route; waiting for a lift or door doesn't count. A stuck rider takes a detour:
+   - It picks a random reachable point 160–640 units away, clear of walls and away from where it stuck, rides there (DETOUR on the readout), then plans again from there.
+   - The detour ends on arrival or after 10 seconds.
+   - An objective that causes three stalls is dropped.
+   - If the next step needs a platform or floor moved again, the rider rides to that floor's repeatable switch or line and uses it.
 
 Pace and resistance come from soloton's bike library ([below](#bike-library)) 20 times a second. To check the bike's sensors on a real bike:
 

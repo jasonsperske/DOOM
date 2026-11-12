@@ -428,6 +428,24 @@ Java_dev_soloton_doom_DoomNative_nativePower(JNIEnv* env, jclass cls)
     return RIDE_Power();
 }
 
+JNIEXPORT void JNICALL
+Java_dev_soloton_doom_DoomNative_nativeSetAutofireRpm(JNIEnv* env, jclass cls, jfloat rpm)
+{
+    RIDE_SetAutofireRpm(rpm);
+}
+
+JNIEXPORT jfloat JNICALL
+Java_dev_soloton_doom_DoomNative_nativeAutofireRpm(JNIEnv* env, jclass cls)
+{
+    return RIDE_AutofireRpm();
+}
+
+JNIEXPORT jboolean JNICALL
+Java_dev_soloton_doom_DoomNative_nativeAutofiring(JNIEnv* env, jclass cls)
+{
+    return RIDE_Autofiring();
+}
+
 JNIEXPORT jint JNICALL
 Java_dev_soloton_doom_DoomNative_nativeRideObjective(JNIEnv* env, jclass cls)
 {
