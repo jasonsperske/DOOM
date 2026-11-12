@@ -25,14 +25,15 @@ import kotlin.math.min
  * - FREE switches to the touch controls below; RIDE switches back.
  *
  * **Free mode:**
- * - Left side: a floating stick. Up/down walks, left/right strafes, pushing to the rim runs.
- * - Anywhere else: drag sideways to turn.
+ * - Bottom left: a stick, started anywhere in the left strip. Up/down walks, left/right strafes,
+ *   pushing to the rim runs.
+ * - Anywhere on the game: drag sideways to turn.
  * - FIRE and USE at the bottom right; dragging a finger on FIRE also turns.
  *
  * In a level, tapping the face in the status bar opens the menu, as MENU does.
  *
- * Always: MENU and MAP at the top left, the bike readout on the left. Weapons 1-7 down the right
- * edge except in ride mode.
+ * Controls sit in the strips beside the 4:3 game so they barely cover it: MENU, MAP, RIDE/FREE and
+ * the bike readout down the left, weapons 1-7 (not in ride mode), USE and FIRE down the right.
  * In menus the stick sends arrow keys, FIRE becomes OK (Enter; also "yes" in prompts) and
  * USE becomes BACK.
  */
@@ -142,26 +143,30 @@ class TouchControls(context: Context) : View(context) {
         gameHeight = gameWidth * 3f / 4f
         gameLeft = (w - gameWidth) / 2f
         gameTop = (h - gameHeight) / 2f
-        val pillar = max(0f, gameLeft)
-        sideColumn = max(pillar / 2f, 130f * unit)
+        // Everything sits in the black strips beside the 4:3 game (240 px each on the bike). Where
+        // there are no strips, the same columns overlay the edges of the game.
+        val column = max(gameLeft, 240f * unit)
+        val half = column / 2f
+        sideColumn = half
+        val rightX = w - half
 
-        place(menu, sideColumn, 110f * unit, 75f * unit)
-        place(map, sideColumn, 290f * unit, 75f * unit)
-        place(ride, sideColumn, 470f * unit, 75f * unit)
-        place(go, sideColumn, h - 170f * unit, 105f * unit)
+        // Left: MENU, MAP, RIDE/FREE, the readout, then the stick (free) or GO (ride) at the bottom.
+        place(menu, half, 90f * unit, min(70f * unit, half - 10f * unit))
+        place(map, half, 240f * unit, min(70f * unit, half - 10f * unit))
+        place(ride, half, 390f * unit, min(70f * unit, half - 10f * unit))
+        place(go, half, h - 200f * unit, min(105f * unit, half - 10f * unit))
+        stickRadius = min(110f * unit, half - 10f * unit)
+        stickRest.set(half, h - 200f * unit)
+        stickZoneRight = column
 
-        val weaponStep = (h - 120f * unit) / weapons.size
+        // Right: weapons in two columns, then USE, then FIRE at the bottom.
+        val weaponRadius = min(50f * unit, column / 4f - 6f * unit)
         weapons.forEachIndexed { i, b ->
-            place(b, w - sideColumn, 90f * unit + i * weaponStep, min(58f * unit, weaponStep * 0.45f))
+            val x = if (i % 2 == 0) rightX - column / 4f else rightX + column / 4f
+            place(b, x, 70f * unit + (i / 2) * 112f * unit, weaponRadius)
         }
-
-        val right = w - pillar
-        place(fire, right - 210f * unit, h - 230f * unit, 135f * unit)
-        place(use, right - 490f * unit, h - 160f * unit, 95f * unit)
-
-        stickRadius = 160f * unit
-        stickRest.set(pillar + 260f * unit, h - 280f * unit)
-        stickZoneRight = w * 0.42f
+        place(use, rightX, 620f * unit, min(85f * unit, half - 10f * unit))
+        place(fire, rightX, h - 190f * unit, min(115f * unit, half - 8f * unit))
 
         textPaint.textSize = 34f * unit
         strokePaint.strokeWidth = 4f * unit
@@ -435,7 +440,7 @@ class TouchControls(context: Context) : View(context) {
         }
         val size = textPaint.textSize
         textPaint.textSize = 28f * unit
-        var y = 600f * unit
+        var y = 510f * unit
         for (line in lines) {
             canvas.drawText(line, sideColumn, y, textPaint)
             y += 42f * unit

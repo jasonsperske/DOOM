@@ -89,17 +89,17 @@ adb shell am start -n dev.soloton.doom/dev.soloton.bike.BikeDiagnosticsActivity
 
 ## Controls
 
-In free mode (or ride mode's MENU and MAP; weapons are picked by pedal power there):
+All controls sit in the black strips beside the 4:3 game (240 px each on the bike), so they barely cover it. In free mode (or ride mode's MENU and MAP; weapons are picked by pedal power there):
 
 | Control | In the game | In menus |
 |---|---|---|
-| Stick (touch anywhere on the left) | Up/down walks, left/right strafes, push to the rim to run | Arrow keys, repeating while held |
-| Drag anywhere else | Turn | |
-| FIRE (bottom right) | Fire; drag on it to turn while firing | OK (Enter); also answers "yes" in prompts |
-| USE | Open doors, press switches | BACK |
-| MENU / MAP | Esc / automap | Esc |
+| Stick (bottom of the left strip; start anywhere in the strip) | Up/down walks, left/right strafes, push to the rim to run | Arrow keys, repeating while held |
+| Drag on the game | Turn | |
+| FIRE (bottom of the right strip) | Fire; drag on it to turn while firing | OK (Enter); also answers "yes" in prompts |
+| USE (above FIRE) | Open doors, press switches | BACK |
+| MENU / MAP (top of the left strip) | Esc / automap | Esc |
 | The face in the status bar | Opens the menu (in ride mode too) | |
-| 1-7 (right edge) | Weapons | hidden |
+| 1-7 (top of the right strip) | Weapons | hidden |
 
 Hardware keyboards and the Back key also work. Back opens and closes the menu.
 
