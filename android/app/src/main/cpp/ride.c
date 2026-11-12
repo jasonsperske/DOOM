@@ -7,6 +7,9 @@
 // - Speed comes from the bike's pace (cadence), so stopping pedalling stops the player.
 // - The player faces the nearest visible monster (or the one the rider touched) and strafes so
 //   the route is still followed; with no monster in sight the player faces along the route.
+// - Monster shots about to hit the player are sidestepped, and so are imps and other projectile
+//   throwers winding up an attack at the player: they aim where the player is as the shot leaves.
+//   This works even when the rider has stopped pedalling; a stopped rider brakes to a halt after.
 // - The route is a tour: the nearest key not yet held, then the nearest switch or trigger line that
 //   opens or moves something, and only then the exit (the secret exit on maps that lead to a
 //   secret level, so every level is played). Doors open as the player reaches them only if they
@@ -105,6 +108,9 @@ extern int viewwindowx, viewwindowy;
 #define AIM_SLACK       0.06f   // radians either side of the aim allowed for turning and drift
 #define EVADE_MAX_TICS  (3*TICRATE)   // back away from a barrel at most this long ...
 #define EVADE_REST_TICS (2*TICRATE)   // ... then follow the route this long before trying again
+#define SHOT_TICS       35      // step out of the way of a shot arriving within this many tics ...
+#define SHOT_MARGIN     20.0f   // ... that would pass within this much of the player's edge
+#define DODGE_MOVE      40      // dodge at least this fast (of MAX_MOVE), pedalling or not
 
 // ---------------------------------------------------------------------------
 // Inputs from the UI thread
@@ -271,6 +277,7 @@ static int g_numBarrels;
 static int g_evadeTics;      // tics spent backing away from a barrel in the line of fire
 static int g_evadeRestUntil; // no backing away before this tic
 static int g_evadeSide = 1;  // which way to step to take a barrel out of the line of fire
+static int g_dodging;        // stepping out of a shot's path last tic
 static int g_bestProgress;   // furthest route cell reached, and when: no progress for long is stuck
 static int g_bestProgressTic;
 static fixed_t g_stuckX, g_stuckY;
@@ -2271,12 +2278,23 @@ static angle_t ClearHeading(mobj_t* mo, float wx, float wy, float* score)
 {
     float px = mo->x / (float)FRACUNIT, py = mo->y / (float)FRACUNIT;
     float len = sqrtf(wx * wx + wy * wy);
+    int here = CellAt(px, py);
+    int onHazard = here >= 0 && (g_cellFlags[here] & CF_HAZARD);
     float bestScore = -2;
     float bestX = wx, bestY = wy;
     for (int k = 0; k < 16; k++)
     {
         float hx = cosf(k * (float)M_PI / 8), hy = sinf(k * (float)M_PI / 8);
         if (!ClearPath(px, py, px + hx * 48, py + hy * 48))
+            continue;
+        // Nor onto damaging floor, as far as the player may slide.
+        int hazard = 0;
+        for (int r = CELL; r <= 96 && !onHazard && !hazard; r += CELL)
+        {
+            int c = CellAt(px + hx * r, py + hy * r);
+            hazard = c >= 0 && (g_cellFlags[c] & CF_HAZARD);
+        }
+        if (hazard)
             continue;
         float s = len > 0 ? (hx * wx + hy * wy) / len : 0;
         if (s > bestScore) { bestScore = s; bestX = hx; bestY = hy; }
@@ -2285,7 +2303,114 @@ static angle_t ClearHeading(mobj_t* mo, float wx, float wy, float* score)
     return R_PointToAngle2(mo->x, mo->y, mo->x + (fixed_t)(bestX * 64 * FRACUNIT), mo->y + (fixed_t)(bestY * 64 * FRACUNIT));
 }
 
-// The way to move while fighting a boss:circle it between BOSS_KEEP_MIN and BOSS_KEEP_MAX,
+// Is this monster winding up a projectile attack (imp, cacodemon, baron and the like)? They aim at
+// where the player is when the shot leaves, so being on the move by then makes it miss.
+static int WindingUp(mobj_t* m)
+{
+    switch (m->type)
+    {
+      case MT_TROOP: case MT_HEAD: case MT_BRUISER: case MT_KNIGHT: case MT_UNDEAD:
+      case MT_FATSO: case MT_BABY: case MT_CYBORG:
+        break;
+      default:
+        return 0;
+    }
+    int st = mobjinfo[m->type].missilestate;
+    for (int i = 0; i < 12 && st != S_NULL && st != mobjinfo[m->type].seestate; i++)
+    {
+        if (m->state == &states[st])
+            return 1;
+        st = states[st].nextstate;
+    }
+    return 0;
+}
+
+// A side step across the line (dx, dy), preferring the way we are going and then the side that is
+// open.
+static void SideStep(float px, float py, float dx, float dy, float moveX, float moveY, float* sx, float* sy)
+{
+    float len = sqrtf(dx * dx + dy * dy);
+    *sx = -dy / len;
+    *sy = dx / len;
+    if (*sx * moveX + *sy * moveY < 0)
+        *sx = -*sx, *sy = -*sy;
+    if (!ClearPath(px, py, px + *sx * 48, py + *sy * 48))
+        *sx = -*sx, *sy = -*sy;
+}
+
+// Monster shots about to hit the player: which way to step out of their paths, as a vector that is
+// longer the more urgent, in *outX, *outY. Monsters winding up a shot at the player count too.
+// Returns how many threats there are. (moveX, moveY): the way the player means to go, to pick a side
+// when a shot is coming straight on.
+static int ShotDodge(mobj_t* mo, float moveX, float moveY, float* outX, float* outY)
+{
+    float px = mo->x / (float)FRACUNIT, py = mo->y / (float)FRACUNIT;
+    float pvx = mo->momx / (float)FRACUNIT, pvy = mo->momy / (float)FRACUNIT;
+    float wx = 0, wy = 0;
+    int n = 0;
+    for (thinker_t* th = thinkercap.next; th != &thinkercap; th = th->next)
+    {
+        if (th->function.acp1 != (actionf_p1)P_MobjThinker)
+            continue;
+        mobj_t* m = (mobj_t*)th;
+        if (m->health > 0 && m->target == mo && WindingUp(m) && P_CheckSight(m, mo))
+        {
+            // About to throw: get moving across its aim, and back off one that is close enough
+            // to claw instead.
+            float dx = px - m->x / (float)FRACUNIT, dy = py - m->y / (float)FRACUNIT;
+            float d = sqrtf(dx * dx + dy * dy);
+            if (d < 1)
+                continue;
+            float sx, sy;
+            SideStep(px, py, dx, dy, moveX, moveY, &sx, &sy);
+            wx += sx * 1.5f;
+            wy += sy * 1.5f;
+            if (d < 128)
+            {
+                wx += dx / d;
+                wy += dy / d;
+            }
+            n++;
+            continue;
+        }
+        // Shots, and lost souls charging: anything flying that isn't ours.
+        if (!((m->flags & MF_MISSILE) && m->target != mo) && !((m->flags & MF_SKULLFLY) && m != mo))
+            continue;
+        // Its path relative to the player, who may already be stepping aside.
+        float vx = m->momx / (float)FRACUNIT - pvx, vy = m->momy / (float)FRACUNIT - pvy;
+        float vv = vx * vx + vy * vy;
+        if (vv < 1)
+            continue;
+        float rx = px - m->x / (float)FRACUNIT, ry = py - m->y / (float)FRACUNIT;
+        float t = (rx * vx + ry * vy) / vv;   // tics until closest
+        if (t < 0 || t > SHOT_TICS)
+            continue;
+        float cx = rx - vx * t, cy = ry - vy * t;   // from the shot's path to the player
+        float miss = sqrtf(cx * cx + cy * cy);
+        float reach = (mo->radius + m->radius) / (float)FRACUNIT + SHOT_MARGIN;
+        if (miss > reach)
+            continue;
+        // Passing over or under (fired from a ledge, say)?
+        float mz = (m->z + m->momz * t) / (float)FRACUNIT;
+        if (mz > (mo->z + mo->height) / (float)FRACUNIT + 8 || mz + m->height / (float)FRACUNIT < mo->z / (float)FRACUNIT - 8)
+            continue;
+        if (miss < 4)
+        {
+            // Straight on: step to the side that is open, preferring the way we are going.
+            SideStep(px, py, vx, vy, moveX, moveY, &cx, &cy);
+            miss = 1;
+        }
+        float urgency = 2.0f * (1 - miss / reach) + 2.0f * (1 - t / SHOT_TICS) + 1.0f;
+        wx += cx / miss * urgency;
+        wy += cy / miss * urgency;
+        n++;
+    }
+    *outX = wx;
+    *outY = wy;
+    return n;
+}
+
+// The way to move while fighting a boss: circle it between BOSS_KEEP_MIN and BOSS_KEEP_MAX,
 // sidestep shots heading our way, and only ever take a heading that is clear of walls.
 static angle_t BossSteer(mobj_t* mo, mobj_t* boss)
 {
@@ -2759,6 +2884,30 @@ void RIDE_BuildTiccmd(ticcmd_t* cmd)
         g_evadeTics = 0;
     }
 
+    // Shots on their way: step out of their paths, even if the rider has stopped pedalling, but
+    // not off a lift that is carrying us. Boss fights dodge in BossSteer.
+    int dodging = 0;
+    if (!g_fighting && !(holding && mo->subsector->sector->specialdata))
+    {
+        int fine = moveAngle >> ANGLETOFINESHIFT;
+        int going = pace >= 0.2f && !holding;   // weigh the way we are going only if we are going
+        float mx = going ? finecosine[fine] / (float)FRACUNIT : 0, my = going ? finesine[fine] / (float)FRACUNIT : 0;
+        float dx, dy, score;
+        int shots = ShotDodge(mo, finecosine[fine] / (float)FRACUNIT, finesine[fine] / (float)FRACUNIT, &dx, &dy);
+        if (shots)
+        {
+            angle_t dodge = ClearHeading(mo, mx + dx, my + dy, &score);
+            if (score > -2)
+            {
+                if (!g_dodging)
+                    LOGI("Ride: dodging (%d threat%s)", shots, shots > 1 ? "s" : "");
+                moveAngle = dodge;
+                dodging = 1;
+            }
+        }
+    }
+    g_dodging = dodging;
+
     angle_t faceAngle = g_target ? R_PointToAngle2(mo->x, mo->y, g_target->x, g_target->y) : moveAngle;
     int turn = TurnTowards(mo->angle, faceAngle, g_target ? 1536 : 1024);
 
@@ -2766,6 +2915,23 @@ void RIDE_BuildTiccmd(ticcmd_t* cmd)
     if (speedFrac > 1) speedFrac = 1;
     if (pace < 0.2f || holding) speedFrac = 0;
     int speed = (int)(speedFrac * MAX_MOVE);
+    if (dodging && speed < DODGE_MOVE)
+        speed = DODGE_MOVE;
+
+    // Not going anywhere (stopped pedalling, or waiting) and not dodging: brake against any
+    // slide left over from a dodge, so a stopped rider stays where they stopped.
+    int braking = 0;
+    if (speed == 0 && !dodging && !g_fighting && !(holding && mo->subsector->sector->specialdata))
+    {
+        float vx = mo->momx / (float)FRACUNIT, vy = mo->momy / (float)FRACUNIT;
+        float v = sqrtf(vx * vx + vy * vy);
+        if (v > 1)
+        {
+            moveAngle = R_PointToAngle2(0, 0, -mo->momx, -mo->momy);
+            speed = v * 8 > MAX_MOVE ? MAX_MOVE : (int)(v * 8);
+            braking = 1;
+        }
+    }
 
     angle_t rel = moveAngle - (mo->angle + ((angle_t)turn << 16));
     int fine = rel >> ANGLETOFINESHIFT;
@@ -2819,7 +2985,7 @@ void RIDE_BuildTiccmd(ticcmd_t* cmd)
         g_bestProgress = g_progress;
         g_bestProgressTic = gametic;
     }
-    if (speed == 0 || waiting || g_fighting || evading)
+    if (speed == 0 || braking || waiting || g_fighting || evading || dodging)
         g_bestProgressTic = gametic;
     if (gametic - g_bestProgressTic > 2 * STUCK_TICS)
     {
@@ -2828,7 +2994,7 @@ void RIDE_BuildTiccmd(ticcmd_t* cmd)
         g_stuckX = mo->x;
         g_stuckY = mo->y;
     }
-    if (speed > 0 && !g_fighting && !evading)
+    if (speed > 0 && !braking && !g_fighting && !evading && !dodging && !holding)
     {
         if (abs(mo->x - g_stuckX) + abs(mo->y - g_stuckY) > 8 * FRACUNIT)
         {
