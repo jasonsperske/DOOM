@@ -11,8 +11,10 @@
 //   opens or moves something, and only then the exit (the secret exit on maps that lead to a
 //   secret level, so every level is played). Doors open as the player reaches them only if they
 //   are unlocked or the player has the key; doors and floors worked from elsewhere only once their
-//   line has been triggered. Lifts lower as the player reaches them. If the exit cannot be
-//   reached that way, doors and floors on the route are opened and moved regardless.
+//   line has been triggered. Lifts lower as the player reaches them. After triggering a line, the
+//   player holds still until what it moves stops, facing it (or a monster, which comes first) and
+//   still firing. If the exit cannot be reached that way, doors and floors on the route are opened
+//   and moved regardless.
 // - Reaching the exit line or switch ends the level.
 // - Holding a finger on a monster's sprite targets it and fires. Pedalling at or above the
 //   auto-fire cadence (by skill level, or set) fires at the nearest monster in sight on its own.
@@ -1573,18 +1575,22 @@ static int g_objSpecial;           // the objective line's special as it was tri
 
 // Is any door, floor or lift moving (perpetual lifts and crushers aside)? Planning mid-move sees
 // half-open doors and half-raised floors.
+// A door, floor or lift on the move (not a perpetual lift, which never stops).
+static int SectorMoving(sector_t* sec)
+{
+    thinker_t* th = sec->specialdata;
+    if (!th)
+        return 0;
+    if (th->function.acp1 == (actionf_p1)T_VerticalDoor || th->function.acp1 == (actionf_p1)T_MoveFloor)
+        return 1;
+    return th->function.acp1 == (actionf_p1)T_PlatRaise && ((plat_t*)th)->type != perpetualRaise;
+}
+
 static int AnythingMoving(void)
 {
     for (int s = 0; s < numsectors; s++)
-    {
-        thinker_t* th = sectors[s].specialdata;
-        if (!th)
-            continue;
-        if (th->function.acp1 == (actionf_p1)T_VerticalDoor || th->function.acp1 == (actionf_p1)T_MoveFloor)
+        if (SectorMoving(&sectors[s]))
             return 1;
-        if (th->function.acp1 == (actionf_p1)T_PlatRaise && ((plat_t*)th)->type != perpetualRaise)
-            return 1;
-    }
     return 0;
 }
 
@@ -1676,6 +1682,33 @@ static int Settling(void)
 static float Dist2(float ax, float ay, float bx, float by)
 {
     return (ax - bx) * (ax - bx) + (ay - by) * (ay - by);
+}
+
+// While holding still for sectors to move, the one to watch: the nearest moving sector the line
+// just triggered tags (floor or ceiling), else the nearest door, floor or lift on the move. NULL if
+// none, or if it is the one the player stands in.
+static sector_t* WatchedSector(mobj_t* mo)
+{
+    int tag = g_settleLine >= 0 ? lines[g_settleLine].tag : -1;
+    float px = mo->x / (float)FRACUNIT, py = mo->y / (float)FRACUNIT;
+    sector_t* best = NULL;
+    int bestTagged = 0;
+    float bestD = 0;
+    for (int s = 0; s < numsectors; s++)
+    {
+        sector_t* sec = &sectors[s];
+        int tagged = sec->tag == tag && sec->specialdata;
+        if (!tagged && !SectorMoving(sec))
+            continue;
+        float d = Dist2(px, py, sec->soundorg.x / (float)FRACUNIT, sec->soundorg.y / (float)FRACUNIT);
+        if (!best || tagged > bestTagged || (tagged == bestTagged && d < bestD))
+        {
+            best = sec;
+            bestTagged = tagged;
+            bestD = d;
+        }
+    }
+    return best == mo->subsector->sector ? NULL : best;
 }
 
 static int IsTeleportHop(int i)
@@ -2578,10 +2611,13 @@ void RIDE_BuildTiccmd(ticcmd_t* cmd)
         LOGI("Ride: %s", g_fighting ? "fighting the boss" : "not fighting");
 
     float x = mo->x / (float)FRACUNIT, y = mo->y / (float)FRACUNIT;
-    if (!g_fighting)
+    // A line just triggered, or something is moving: hold still and let it finish first, watching
+    // it, but keep fighting.
+    int holding = !g_fighting && (Settling() || (g_routeState == ROUTE_NONE && gametic < g_planHoldUntil));
+    if (g_fighting)
+        g_routeState = ROUTE_NONE;   // plan afresh after the fight
+    else if (!holding)
     {
-        if (Settling() || (g_routeState == ROUTE_NONE && gametic < g_planHoldUntil))
-            return;   // a line just triggered, or something is moving: let it finish first
         if (g_routeState == ROUTE_NONE)
         {
             if (boss)
@@ -2626,8 +2662,6 @@ void RIDE_BuildTiccmd(ticcmd_t* cmd)
             OpenTheWay(mo);
         }
     }
-    else
-        g_routeState = ROUTE_NONE;   // plan afresh after the fight
 
     // Targeting
     if (touchDown)
@@ -2666,6 +2700,16 @@ void RIDE_BuildTiccmd(ticcmd_t* cmd)
         if (!g_targetTapped || !g_target)
             g_target = boss;   // keep the boss in front
     }
+    else if (holding)
+    {
+        // Face what is moving, unless a monster needs facing (faceAngle below).
+        sector_t* watch = WatchedSector(mo);
+        static sector_t* lastWatch;
+        if (watch && watch != lastWatch)
+            LOGI("Ride: waiting; watching sector %d (tag %d) move", SectorIndex(watch), watch->tag);
+        lastWatch = watch;
+        moveAngle = watch ? R_PointToAngle2(mo->x, mo->y, watch->soundorg.x, watch->soundorg.y) : mo->angle;
+    }
     else
     {
         float tx, ty;
@@ -2673,7 +2717,7 @@ void RIDE_BuildTiccmd(ticcmd_t* cmd)
         moveAngle = R_PointToAngle2(mo->x, mo->y, (fixed_t)(tx * FRACUNIT), (fixed_t)(ty * FRACUNIT));
     }
     // Blocked for a second (usually a monster in the way): sidestep, a different side each time.
-    if (!g_fighting && g_stuckTics > TICRATE)
+    if (!g_fighting && !holding && g_stuckTics > TICRATE)
     {
         if (g_stuckTics % TICRATE == 0)
             g_nudgeSign = -g_nudgeSign;
@@ -2687,7 +2731,7 @@ void RIDE_BuildTiccmd(ticcmd_t* cmd)
     int wantFire = g_target && ((touchDown && g_targetTapped) || (g_autofiring && P_CheckSight(mo, g_target)));
     int evading = 0;
     mobj_t *lit, *hurts;
-    if (wantFire && gametic >= g_evadeRestUntil &&
+    if (wantFire && !holding && gametic >= g_evadeRestUntil &&
         BarrelDangerTowards(mo, g_target, player->readyweapon, &lit, &hurts))
     {
         if (g_evadeTics++ == 0)
@@ -2720,7 +2764,7 @@ void RIDE_BuildTiccmd(ticcmd_t* cmd)
 
     float speedFrac = pace / FULL_PACE;
     if (speedFrac > 1) speedFrac = 1;
-    if (pace < 0.2f) speedFrac = 0;
+    if (pace < 0.2f || holding) speedFrac = 0;
     int speed = (int)(speedFrac * MAX_MOVE);
 
     angle_t rel = moveAngle - (mo->angle + ((angle_t)turn << 16));
