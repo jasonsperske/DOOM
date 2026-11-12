@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: GPL-2.0-or-later -->
+<!-- Merged into every app that depends on libs:bike. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+        Declared by Grupetto. The one firmware whose service manifest has been published
+        (Android 11) does not guard the sensor service with it, but an older build might, and
+        requesting a permission that does not exist costs nothing.
+    -->
+    <uses-permission android:name="onepeloton.permission.ACCESS_SENSOR_SERVICE" />
+
+    <!-- Package visibility for Android 11+ tablets. Ignored on the API 24 bike. -->
+    <queries>
+        <package android:name="com.onepeloton.affernetservice" />
+        <package android:name="com.peloton.service.SensorData" />
+        <intent>
+            <action android:name="com.onepeloton.affernetservice.IV1Interface" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.peloton.SensorData" />
+        </intent>
+    </queries>
+
+    <application>
+        <!--
+            Exported with no launcher entry, so the owner can open it over adb from any app that
+            includes this library:
+            adb shell am start -n <application id>/dev.soloton.bike.BikeDiagnosticsActivity
+            It only reads sensors and shows them; it takes nothing from the starting intent.
+        -->
+        <activity
+            android:name="dev.soloton.bike.BikeDiagnosticsActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="true"
+            android:label="Bike sensor diagnostics"
+            android:screenOrientation="sensorLandscape"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen" />
+    </application>
+</manifest>

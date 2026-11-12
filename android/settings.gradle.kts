@@ -17,3 +17,7 @@ dependencyResolutionManagement {
 rootProject.name = "doom-android"
 
 include(":app")
+
+// Vendored from soloton, GPL-2.0-or-later: see libs/UPSTREAM.
+include(":libs:bike-core")
+include(":libs:bike")

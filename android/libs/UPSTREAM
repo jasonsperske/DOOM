@@ -1,0 +1,4 @@
+# The bike library under libs/ is vendored from soloton, GPL-2.0-or-later.
+# Refresh with: scripts/sync-bike-lib.sh [path-to-soloton-checkout] [git-ref]
+repository=https://github.com/jasonsperske/soloton
+commit=3018224e6efa35932569343d5bd193561e15fada

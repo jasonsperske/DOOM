@@ -51,3 +51,7 @@ android {
         disable += setOf("ExpiredTargetSdkVersion", "OldTargetApi", "GradleDependency", "AndroidGradlePluginVersion")
     }
 }
+
+dependencies {
+    implementation(project(":libs:bike"))
+}
