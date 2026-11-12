@@ -95,4 +95,4 @@ There are touch controls for playing without the bike, plus MIDI music
 and sound effects.
 
 For build, install and usage instructions, see android/README.md:
-https://github.com/jasonsperske/DOOM/blob/pelodoom/android/README.md
+https://github.com/jasonsperske/DOOM/blob/master/android/README.md
