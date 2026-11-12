@@ -139,9 +139,13 @@ static void QueueCallback(SLAndroidSimpleBufferQueueItf queue, void* context)
     (*queue)->Enqueue(queue, buf, sizeof(g_buffers[0]));
 }
 
-// Stereo split as in linuxdoom: sep is 1..255 with 128 centred, vol is 0..127.
+// Stereo split as in linuxdoom: sep is 1..255 with 128 centred. vol arrives as s_sound.c
+// computes it, 0..15 (snd_SfxVolume's range: linuxdoom never scaled it up), and is mixed as 0..127.
 static void SetChannelParams(channel_t* ch, int vol, int sep)
 {
+    vol = vol * 127 / 15;
+    if (vol > 127) vol = 127;
+    if (vol < 0) vol = 0;
     sep += 1;
     ch->leftvol = vol - ((vol * sep * sep) >> 16);
     sep -= 257;
