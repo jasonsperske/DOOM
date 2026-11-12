@@ -227,6 +227,36 @@ static void Hang(void)
         sleep(60);
 }
 
+void DA_MusicPlay(const char* midiPath, int looping)
+{
+    JNIEnv* env = GameThreadEnv();
+    jmethodID m = (*env)->GetStaticMethodID(env, g_bridgeClass, "onMusicPlay", "(Ljava/lang/String;Z)V");
+    jstring jpath = (*env)->NewStringUTF(env, midiPath);
+    (*env)->CallStaticVoidMethod(env, g_bridgeClass, m, jpath, (jboolean)(looping != 0));
+    (*env)->DeleteLocalRef(env, jpath);
+}
+
+void DA_MusicStop(void)
+{
+    JNIEnv* env = GameThreadEnv();
+    jmethodID m = (*env)->GetStaticMethodID(env, g_bridgeClass, "onMusicStop", "()V");
+    (*env)->CallStaticVoidMethod(env, g_bridgeClass, m);
+}
+
+void DA_MusicPause(int paused)
+{
+    JNIEnv* env = GameThreadEnv();
+    jmethodID m = (*env)->GetStaticMethodID(env, g_bridgeClass, "onMusicPause", "(Z)V");
+    (*env)->CallStaticVoidMethod(env, g_bridgeClass, m, (jboolean)(paused != 0));
+}
+
+void DA_MusicVolume(float volume)
+{
+    JNIEnv* env = GameThreadEnv();
+    jmethodID m = (*env)->GetStaticMethodID(env, g_bridgeClass, "onMusicVolume", "(F)V");
+    (*env)->CallStaticVoidMethod(env, g_bridgeClass, m, (jfloat)volume);
+}
+
 void DA_Quit(void)
 {
     JNIEnv* env = GameThreadEnv();

@@ -4,7 +4,7 @@
 // in OpenSL's buffer-queue callback, so the game thread only starts, stops and adjusts
 // channels under a lock; I_UpdateSound and I_SubmitSound have nothing to do.
 //
-// Music is not played yet: DOOM's MUS tracks need a MIDI synthesiser.
+// Music is in i_music_android.c.
 
 #include <stdint.h>
 #include <stdio.h>
@@ -297,17 +297,3 @@ void I_ShutdownSound(void)
     g_playerObj = g_mixObj = g_engineObj = NULL;
     g_play = NULL;
 }
-
-// ---------------------------------------------------------------------------
-// Music: not implemented yet.
-
-void I_InitMusic(void) {}
-void I_ShutdownMusic(void) {}
-void I_SetMusicVolume(int volume) { snd_MusicVolume = volume; }
-void I_PauseSong(int handle) {}
-void I_ResumeSong(int handle) {}
-int I_RegisterSong(void* data) { return 1; }
-void I_PlaySong(int handle, int looping) {}
-void I_StopSong(int handle) {}
-void I_UnRegisterSong(int handle) {}
-int I_QrySongPlaying(int handle) { return 0; }

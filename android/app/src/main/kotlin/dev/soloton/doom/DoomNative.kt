@@ -74,6 +74,24 @@ object DoomNative {
         main.post { listener?.onFatalError(message) ?: endProcess() }
     }
 
+    // Music (i_music_android.c). These must return void: the native side looks them up by signature.
+
+    @JvmStatic fun onMusicPlay(path: String, looping: Boolean) {
+        MusicPlayer.play(path, looping)
+    }
+
+    @JvmStatic fun onMusicStop() {
+        MusicPlayer.stop()
+    }
+
+    @JvmStatic fun onMusicPause(paused: Boolean) {
+        MusicPlayer.setGamePaused(paused)
+    }
+
+    @JvmStatic fun onMusicVolume(volume: Float) {
+        MusicPlayer.setVolume(volume)
+    }
+
     fun endProcess() {
         android.os.Process.killProcess(android.os.Process.myPid())
     }

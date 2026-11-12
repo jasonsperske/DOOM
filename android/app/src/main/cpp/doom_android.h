@@ -28,6 +28,12 @@ long long DA_PausedMillis(void);       // total time spent paused, excluded from
 // Sound output follows the activity lifecycle.
 void DA_SoundPause(int paused);
 
+// Music, played by MusicPlayer.kt (called on the game thread).
+void DA_MusicPlay(const char* midiPath, int looping);
+void DA_MusicStop(void);
+void DA_MusicPause(int paused);
+void DA_MusicVolume(float volume);   // 0..1
+
 // Calls back into Java on the game thread; neither returns.
 void DA_Quit(void) __attribute__((noreturn));
 void DA_FatalError(const char* message) __attribute__((noreturn));

@@ -174,6 +174,7 @@ class DoomActivity : Activity(), DoomNative.Listener, SurfaceHolder.Callback {
         super.onResume()
         enterImmersive()
         if (running) DoomNative.nativeSetPaused(false)
+        MusicPlayer.setAppPaused(false)
         bike.start()
         handler.post(feedBike)
     }
@@ -186,6 +187,7 @@ class DoomActivity : Activity(), DoomNative.Listener, SurfaceHolder.Callback {
             }
             DoomNative.nativeSetPaused(true)
         }
+        MusicPlayer.setAppPaused(true)
         handler.removeCallbacks(feedBike)
         bike.stop()
         super.onPause()

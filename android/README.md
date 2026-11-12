@@ -99,6 +99,7 @@ Leaving the app pauses the game and opens the menu, so you never come back mid-f
 | `android_main.c` | JNI bridge: runs `D_DoomMain` on its own thread, queues input for `I_StartTic`, hands over the surface, handles pause/resume, sends stdout to logcat (tag `DOOM`) |
 | `i_video_android.c` | Converts the 320x200 paletted frame and scales it (nearest neighbour) into the `SurfaceView` buffer. The view is 4:3 and centred, so 1440x1080 on the bike |
 | `i_sound_android.c` | Sound effects mixed in an OpenSL ES callback (44.1 kHz stereo) |
+| `i_music_android.c` | Music: converts each song's MUS lump to a standard MIDI file (MIDI lumps from PWADs pass through) in the app's files folder; `MusicPlayer.kt` plays it, looping, with Android's built-in MIDI synthesiser (`MediaPlayer`). It follows the menu's music volume and pauses with the game and when the app is in the background |
 | `i_system_android.c` | Timer that ignores time spent paused, 32 MB zone heap, `I_Error`/`I_Quit` call back to Kotlin |
 | `i_net_android.c` | Single player only |
 | `ride.c` | Ride mode: route planning, steering, targeting, doors and lifts, firepower |
@@ -122,7 +123,7 @@ scripts/sync-bike-lib.sh ~/dev/soloton origin/main
 
 ## Not done yet
 
-- Music (MUS needs a MIDI synth)
+- OPL (Sound Blaster) music: Android's General MIDI synthesiser sounds different from DOOM's original FM music
 - Tuning ride mode's speed and firepower on a real bike
 - Multiplayer
 - `-iwad` and other WAD names
