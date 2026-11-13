@@ -1,4 +1,4 @@
-package dev.soloton.doom
+package dev.exerdoom.app
 
 import android.annotation.SuppressLint
 import android.content.Context

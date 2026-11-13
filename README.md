@@ -1,10 +1,23 @@
-# DOOM for the Peloton Bike (gen 1)
+# ExerDoom
 
-An Android port of `linuxdoom-1.10` for the original Peloton Bike's tablet: Android 7.0 (API 24), 1920x1080 landscape, MediaTek MT8173. It runs on any Android 7.0+ device.
+DOOM for exercise equipment. You ride through each level: pedalling moves you along a route to the exit, and you fight by touching the monsters. Touch-only controls are there too.
 
-You ride through each level: pedalling moves you along a route to the exit, and you fight by touching the monsters. Touch-only controls are there too.
+ExerDoom starts from id Software's 1997 `linuxdoom-1.10` source release and runs it on Android. The first device it targets is the original Peloton Bike's tablet: Android 7.0 (API 24), 1920x1080 landscape, MediaTek MT8173. It runs on any Android 7.0+ device.
+
+**To play, download the APK from [Releases](https://github.com/jasonsperske/ExerDoom/releases) and sideload it.** The shareware episode is built in.
 
 The build setup follows [soloton](https://github.com/jasonsperske/soloton): the same toolchain, `minSdk 24`, and an APK for sideloading.
+
+## Repository layout
+
+| Path | What it is |
+|---|---|
+| `app/` | The Android app. `src/main/cpp/` holds the Android platform layer and ride mode (`ride.c`); `src/main/kotlin/` holds the activity, touch controls and music player |
+| `libs/` | soloton's bike library, vendored ([below](#bike-library)) |
+| `linuxdoom-1.10/` | The engine: id's 1997 source, with the changes listed under [How it works](#how-it-works). `git log` on it shows id's original release first |
+| `upstream/` | The rest of id's 1997 release, kept for reference and not built: John Carmack's `README.TXT`, the DOS IPX and serial network drivers (`ipx/`, `sersrc/`) and the Linux sound server (`sndserv/`) |
+| `scripts/` | Repository scripts, such as refreshing the bike library |
+| `LICENSE.TXT` | The GNU GPL 2.0, which covers id's source and ExerDoom |
 
 ## Build
 
@@ -13,7 +26,6 @@ You need JDK 17+, the Android SDK, **NDK 29.0.14206865** and **CMake 3.31.6**. W
 ```bash
 . ~/.local/share/soloton-toolchain/env.sh
 sdkmanager "ndk;29.0.14206865" "cmake;3.31.6"     # once
-cd android
 echo "sdk.dir=$ANDROID_HOME" > local.properties   # once, if ANDROID_HOME is not set
 ./gradlew :app:assembleDebug
 ```
@@ -22,31 +34,33 @@ The output is `app/build/outputs/apk/debug/app-debug.apk`, with `arm64-v8a` and 
 
 ## Install and add a WAD
 
-DOOM needs game data (an IWAD), which is not included. Use one of the names the 1997 engine looks for, in lower case: `doom1.wad` (shareware), `doom.wad`, `doomu.wad`, `doom2.wad`, `plutonia.wad`, `tnt.wad`. Put it in either folder:
+The engine needs game data (an IWAD), which is not included. Use one of the names the 1997 engine looks for, in lower case: `doom1.wad` (shareware), `doom.wad`, `doomu.wad`, `doom2.wad`, `plutonia.wad`, `tnt.wad`. Put it in either folder:
 
-- `/sdcard/Android/data/dev.soloton.doom/files/` (no permission needed), or
+- `/sdcard/Android/data/dev.exerdoom.app/files/` (no permission needed), or
 - `/sdcard/Doom/` (the app asks for storage access).
 
 ```bash
 adb install -r app/build/outputs/apk/debug/app-debug.apk
-adb shell mkdir -p /sdcard/Android/data/dev.soloton.doom/files
-adb push doom1.wad /sdcard/Android/data/dev.soloton.doom/files/
+adb shell mkdir -p /sdcard/Android/data/dev.exerdoom.app/files
+adb push doom1.wad /sdcard/Android/data/dev.exerdoom.app/files/
 ```
 
 [Freedoom](https://freedoom.github.io/)'s `freedoom1.wad`, renamed to `doom.wad`, also works.
 
-**Building the shareware WAD into the APK.** If `DOOM1.WAD` (or `doom1.wad`) is at the repository root, the build packs it into the APK. To use a different file, pass `-PembedWad=/path/to/doom1.wad`. On first run, if no other IWAD is installed, the app copies it to private storage and plays it, so the APK works with no setup. WADs stay out of git. Give such an APK only to people allowed to have the WAD: the shareware licence covers passing on the shareware version unmodified and for free.
+Releases up to v0.2.0 were called PeloDOOM and used the app ID `dev.soloton.doom`. ExerDoom installs as a separate app, so uninstall the old one by hand. Saved games don't carry over.
+
+**Building the shareware WAD into the APK.** If `DOOM1.WAD` (or `doom1.wad`) is at the repository root (next to this README), the build packs it into the APK. To use a different file, pass `-PembedWad=/path/to/doom1.wad`. On first run, if no other IWAD is installed, the app copies it to private storage and plays it, so the APK works with no setup. WADs stay out of git. Give such an APK only to people allowed to have the WAD: the shareware licence covers passing on the shareware version unmodified and for free.
 
 With no WAD, the app shows these instructions instead. To pass DOOM command-line arguments while testing:
 
 ```bash
-adb shell am start -n dev.soloton.doom/.DoomActivity --es args "-warp 1 3 -skill 4"
+adb shell am start -n dev.exerdoom.app/.DoomActivity --es args "-warp 1 3 -skill 4"
 ```
 
 To test the higher weapons without a bike, set what GO stands in for (pace in m/s, resistance 0..1):
 
 ```bash
-adb shell am start -n dev.soloton.doom/.DoomActivity --ef go_pace 4.5 --ef go_resistance 1
+adb shell am start -n dev.exerdoom.app/.DoomActivity --ef go_pace 4.5 --ef go_resistance 1
 ```
 
 To test on soloton's gen 1 emulator, run `scripts/gen1-emulator.sh` in the soloton repo, then install as above.
@@ -71,7 +85,7 @@ Each level is ridden as a tour, and the bike drives:
 - **Pedal fast enough and you fire on your own.** At or above the auto-fire cadence, you fire at the nearest monster in sight as soon as you're facing it, with the same rule for rockets.
   - The cadence defaults by skill: 45 rpm on I'm Too Young To Die, then 55, 65 (Hurt Me Plenty), 75, and 85 on Nightmare.
   - Cadence is taken from the bike's smoothed pace; GO counts as about 71 rpm.
-  - Set your own with `adb shell am start -n dev.soloton.doom/.DoomActivity --ef autofire_rpm 70`. It's remembered; `0` returns to the default.
+  - Set your own with `adb shell am start -n dev.exerdoom.app/.DoomActivity --ef autofire_rpm 70`. It's remembered; `0` returns to the default.
   - The readout shows AUTOFIRE ON, or the cadence needed.
 - **Pedal power picks your weapon.** Power runs from 0 to 100%: `speed x (0.4 + 0.6 x resistance)`, where speed is pace over 4.5 m/s (about 105 rpm), capped at 1.
   - Power is split evenly across the game's weapons, weakest first: pistol, shotgun, super shotgun (DOOM II), chaingun, rocket launcher, then plasma rifle and BFG (not in shareware). In shareware, under 25% is the pistol and 75% or more is rockets.
@@ -108,7 +122,7 @@ How the route is planned (`app/src/main/cpp/ride.c`):
 Pace and resistance come from soloton's bike library ([below](#bike-library)) 20 times a second. To check the bike's sensors on a real bike:
 
 ```bash
-adb shell am start -n dev.soloton.doom/dev.soloton.bike.BikeDiagnosticsActivity
+adb shell am start -n dev.exerdoom.app/dev.soloton.bike.BikeDiagnosticsActivity
 ```
 
 ## Controls

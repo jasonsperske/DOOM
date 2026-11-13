@@ -1,4 +1,4 @@
-package dev.soloton.doom
+package dev.exerdoom.app
 
 import android.os.Handler
 import android.os.Looper

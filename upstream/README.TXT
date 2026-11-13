@@ -79,20 +79,3 @@ John Carmack
 
 Copyright (c) ZeniMax Media Inc.
 Licensed under the GNU General Public License 2.0.
-
-
-PeloDOOM: the Peloton Bike port
--------------------------------
-
-This fork adds an Android port of linuxdoom-1.10 for the gen 1 Peloton
-Bike's tablet (Android 7.0 / API 24, 1920x1080), in the android/
-directory.  It runs on any Android 7.0+ device.
-
-Pedalling rides you along a route through each level, opening doors,
-collecting keys and flipping switches on the way to the exit.  You
-fight by tapping monsters; your speed and resistance pick the weapon.
-There are touch controls for playing without the bike, plus MIDI music
-and sound effects.
-
-For build, install and usage instructions, see android/README.md:
-https://github.com/jasonsperske/DOOM/blob/master/android/README.md

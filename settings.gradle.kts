@@ -14,7 +14,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "doom-android"
+rootProject.name = "exerdoom"
 
 include(":app")
 

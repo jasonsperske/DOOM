@@ -1,4 +1,4 @@
-package dev.soloton.doom
+package dev.exerdoom.app
 
 import android.Manifest
 import android.app.Activity
@@ -30,7 +30,7 @@ import java.io.File
  * [TouchControls] over the whole screen.
  *
  * Needs an IWAD (doom1.wad, doom.wad, doomu.wad, doom2.wad, plutonia.wad or tnt.wad, lower case)
- * in the app's own folder, `/sdcard/Android/data/dev.soloton.doom/files`, or in `/sdcard/Doom`.
+ * in the app's own folder, `/sdcard/Android/data/dev.exerdoom.app/files`, or in `/sdcard/Doom`.
  * An APK built with the shareware doom1.wad inside (see app/build.gradle.kts) falls back to that.
  *
  * The bike (via soloton's bike library) drives ride mode: its pace and resistance go to the engine
@@ -43,7 +43,7 @@ import java.io.File
  * `--ef autofire_rpm 70` (remembered; 0 returns to the default).
  *
  * Extra command-line arguments can be passed for testing:
- * `adb shell am start -n dev.soloton.doom/.DoomActivity --es args "-warp 1 1 -skill 3"`
+ * `adb shell am start -n dev.exerdoom.app/.DoomActivity --es args "-warp 1 1 -skill 3"`
  */
 class DoomActivity : Activity(), DoomNative.Listener, SurfaceHolder.Callback {
 

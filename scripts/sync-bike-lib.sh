@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Refresh the vendored bike library (libs/bike-core, libs/bike) from a soloton checkout.
 #
-#   scripts/sync-bike-lib.sh                       ../../soloton at origin/main
+#   scripts/sync-bike-lib.sh                       ../soloton at origin/main
 #   scripts/sync-bike-lib.sh ~/dev/soloton v0.2.0  another checkout or ref
 #
 # Replaces everything upstream owns (sources, tests, LICENSE, README) and keeps this repo's own
@@ -9,7 +9,7 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")/.." && pwd)"
-soloton="${1:-$here/../../soloton}"
+soloton="${1:-$here/../soloton}"
 ref="${2:-origin/main}"
 
 git -C "$soloton" fetch --quiet origin || echo "warning: could not fetch $soloton; using what it has" >&2

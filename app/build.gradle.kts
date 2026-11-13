@@ -5,18 +5,18 @@ plugins {
 }
 
 android {
-    namespace = "dev.soloton.doom"
+    namespace = "dev.exerdoom.app"
     compileSdk = 36
     // The gen 1 Peloton tablet NDK and CMake; install with
     // sdkmanager "ndk;29.0.14206865" "cmake;3.31.6"
     ndkVersion = "29.0.14206865"
 
     defaultConfig {
-        applicationId = "dev.soloton.doom"
+        applicationId = "dev.exerdoom.app"
         minSdk = 24 // Android 7.0, the gen 1 Peloton bike
         targetSdk = 35
-        versionCode = providers.environmentVariable("DOOM_VERSION_CODE").map { it.toInt() }.getOrElse(1)
-        versionName = providers.environmentVariable("DOOM_VERSION_NAME").getOrElse("0.1.0-dev")
+        versionCode = providers.environmentVariable("EXERDOOM_VERSION_CODE").map { it.toInt() }.getOrElse(1)
+        versionName = providers.environmentVariable("EXERDOOM_VERSION_NAME").getOrElse("0.1.0-dev")
 
         ndk {
             // Bike: arm64-v8a (MT8173), armeabi-v7a as a fallback. x86_64 is for the emulator.
@@ -80,7 +80,7 @@ abstract class EmbedWadTask : DefaultTask() {
 }
 
 val embeddedWad = providers.gradleProperty("embedWad").map { listOf(file(it)) }
-    .orElse(listOf(rootProject.file("../DOOM1.WAD"), rootProject.file("../doom1.wad")))
+    .orElse(listOf(rootProject.file("DOOM1.WAD"), rootProject.file("doom1.wad")))
 
 val embedWad = tasks.register<EmbedWadTask>("embedWad") {
     description = "Copies the shareware IWAD, if present, into the APK's assets."
