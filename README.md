@@ -63,6 +63,8 @@ To test the higher weapons without a bike, set what GO stands in for (pace in m/
 adb shell am start -n dev.exerdoom.app/.DoomActivity --ef go_pace 4.5 --ef go_resistance 1
 ```
 
+Add `--ez go_hold true` to pedal at that pace without holding GO, for unattended test runs. 95 rpm at 33% resistance, say, is `--ef go_pace 3.99 --ef go_resistance 0.33 --ez go_hold true` (pace is rpm × 0.042).
+
 To test on soloton's gen 1 emulator, run `scripts/gen1-emulator.sh` in the soloton repo, then install as above.
 
 ## Ride mode
@@ -109,13 +111,13 @@ Each level is ridden as a tour, and the bike drives:
 How the route is planned (`app/src/main/cpp/ride.c`):
 
 1. The map is rasterised into 8-unit cells marking where the player's 30x30 box fits. Cells whose box touches a wall, a ledge too high to climb, a too-low ceiling or solid scenery are blocked.
-2. Lifts are planned at any height they reach. Doors are planned open only if they are unlocked, you hold their key, or their line has been triggered. Floors moved by a triggered line that can still act (including staircases, built as `EV_BuildStairs` would) are planned at any height they can reach. The grid is rebuilt whenever a key is picked up or a line triggered.
-3. A flood fill (Dijkstra) from the player finds everything reachable, then picks the objective: the nearest key, otherwise the nearest worthwhile line (one that opens doors, moves floors or builds stairs; lines with the same action and tag count as one), otherwise the wanted exit, otherwise the other exit or a sector that ends the level (special 11). Teleporters count as links. After a line is triggered, the rider waits up to 10 seconds for its doors and floors to stop moving before planning again. While waiting, they turn to face the nearest sector the line moves, unless a monster needs facing, and keep targeting and firing. Objectives that get the rider stuck three times, or that can't be reached from the end of their route, are dropped. Bosses are found with A*.
+2. Lifts are planned at any height they reach, including the height a lowered lift goes back up to. Doors are planned open only if they are unlocked, you hold their key, or their line has been triggered. Floors moved by a triggered line that can still act (including staircases, built as `EV_BuildStairs` would) are planned at any height they can reach. The grid is rebuilt whenever a key is picked up or a line triggered.
+3. A flood fill (Dijkstra) from the player finds everything reachable, then picks the objective: the nearest key, otherwise the nearest worthwhile line (one that opens doors, moves floors or builds stairs; lines with the same action and tag count as one), otherwise the wanted exit, otherwise the other exit or a sector that ends the level (special 11). Teleporters count as links. After a line is triggered, the rider waits up to 10 seconds for its doors and floors to stop moving before planning again. While waiting, they turn to face the nearest sector the line moves, unless a monster needs facing, and keep targeting and firing. Once chosen, an objective is kept until it is reached or dropped: re-planning after being knocked off the route, a detour or a moving floor sticks with it while it can still be reached, even if another now looks nearer. If it can't be reached just then but doors or lifts are moving, the rider waits up to 5 seconds for them before choosing another. Objectives that get the rider stuck three times, or that can't be reached from the end of their route, are dropped. Bosses are found with A*.
 4. Each tic, the player steers at the farthest route cell that is in a straight line and doesn't brush a wall. When blocked (usually by a monster), they sidestep, alternating sides each second. They re-plan when knocked off the route or teleported.
 5. **Getting unstuck.** The rider counts as stuck after 4 seconds without moving, or 8 seconds pedalling without getting further along the route; waiting for a lift or door doesn't count. A stuck rider takes a detour:
    - It picks a random reachable point 160–640 units away, clear of walls and away from where it stuck, rides there (DETOUR on the readout), then plans again from there.
    - The detour ends on arrival or after 10 seconds.
-   - An objective that causes three stalls is dropped.
+   - Then it goes back to the objective it was heading for. An objective that causes three stalls is dropped.
    - If the next step needs a platform or floor moved again, the rider rides to that floor's repeatable switch or line and uses it.
 6. **Lifts that trap are avoided.** Some lifts are raised to their ceiling by walk-over or switch lines on their own edge (specials 5, 55, 56, 65, 91, 94): stepping on or off can lift the floor with the player on it, or seal the player inside. E1M5's booths and E1M7's pillar are examples. Routes treat these lifts as fixed at their current height, and every cell in one costs heavily, so they are used only if there is no other way. Their lines are never objectives, and detours never end in one.
 

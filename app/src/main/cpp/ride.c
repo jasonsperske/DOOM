@@ -700,6 +700,18 @@ static void ComputeSectorLimits(void)
                 if (sectors[s].tag == lines[i].tag)
                     g_secFlags[s] |= SF_LIFT;
 
+    // A lift on the move or waiting at the bottom is planned up to the height it goes back to, not
+    // just where it is now: a grid built while it is down must still see the way off at the top.
+    for (int i = 0; i < MAXPLATS; i++)
+    {
+        plat_t* p = activeplats[i];
+        if (!p || !p->sector || (g_secFlags[SectorIndex(p->sector)] & SF_AVOID))
+            continue;
+        int s = SectorIndex(p->sector);
+        if (p->high > g_secHighFloor[s]) g_secHighFloor[s] = p->high;
+        if (p->low < g_secLowFloor[s]) g_secLowFloor[s] = p->low;
+    }
+
     // Lines that open or move tagged sectors, and the floor heights those can reach (stairs: the
     // heights they are built to). The heights only count once a line has been triggered.
     for (int i = 0; i < numlines; i++)
@@ -1392,12 +1404,19 @@ static void PlanTour(mobj_t* mo)
     g_route = NULL;
     g_routeLen = 0;
     g_routeState = ROUTE_FAILED;
+    // The key or line we were already heading for and haven't got (re-planning after being knocked
+    // off the route, a detour, a rebuilt grid): kept while it can still be reached, so the rider
+    // doesn't turn back and forth between objectives.
+    int keepKind = g_objKind == OBJ_KEY || g_objKind == OBJ_LINE ? g_objKind : OBJ_NONE;
+    mobj_t* keepKey = g_objKey;   // compared with live things only: it may be gone
+    int keepLine = g_objLine;
     g_objKind = OBJ_NONE;
     g_objArrivedTic = -1;
 
     int start = NearestWalkable(mo->x / (float)FRACUNIT, mo->y / (float)FRACUNIT);
     if (start < 0)
     {
+        g_objKind = keepKind;
         LOGI("Ride: no route (player off the grid)");
         return;
     }
@@ -1409,6 +1428,8 @@ static void PlanTour(mobj_t* mo)
     Search(start, 0, cost, parent, closed);
 
     int goal = -1;
+    int keepPending = 0;   // the kept objective is still there to get
+    int keepCell = -1;     // and where to reach it, if it can be reached
 
     // 1. The nearest key not yet held.
     for (thinker_t* th = thinkercap.next; th != &thinkercap; th = th->next)
@@ -1421,6 +1442,11 @@ static void PlanTour(mobj_t* mo)
             continue;
         float kx = m->x / (float)FRACUNIT, ky = m->y / (float)FRACUNIT;
         int c = BestCellNear(kx, ky, kx, ky, 20, NULL, cost, closed);
+        if (keepKind == OBJ_KEY && m == keepKey)
+        {
+            keepPending = 1;
+            keepCell = c;
+        }
         if (c >= 0 && (goal < 0 || cost[c] < cost[goal]))
         {
             goal = c;
@@ -1448,6 +1474,53 @@ static void PlanTour(mobj_t* mo)
                 g_objLine = i;
             }
         }
+
+    // The line we were heading for (an objective, or a lift's switch the way on needs again).
+    if (keepKind == OBJ_LINE && !g_lineState[keepLine] && lines[keepLine].special)
+    {
+        line_t* l = &lines[keepLine];
+        keepPending = 1;
+        keepCell = BestCellNear(l->v1->x / (float)FRACUNIT, l->v1->y / (float)FRACUNIT,
+                                l->v2->x / (float)FRACUNIT, l->v2->y / (float)FRACUNIT,
+                                LineReach(l) - 4, IsWalkSpecial(l->special) ? NULL : l, cost, closed);
+    }
+
+    // Grit: stay with the objective we were heading for while it can be reached, even if another
+    // now looks nearer. If it can't be reached just now but doors or lifts are on the move (a lift
+    // we lowered, a door a monster opened), wait for them for up to 5 seconds before giving it up
+    // for another.
+    if (keepCell >= 0)
+    {
+        goal = keepCell;
+        g_objKind = keepKind;
+        if (keepKind == OBJ_KEY)
+        {
+            g_objKey = keepKey;
+            g_objColor = KeyColor(keepKey);   // found among the live things above
+        }
+        else
+            g_objLine = keepLine;
+    }
+    else if (keepPending && !g_magic && AnythingMoving() &&
+             (g_holdingSince < 0 || gametic - g_holdingSince < 5 * TICRATE))
+    {
+        if (g_holdingSince < 0)
+        {
+            g_holdingSince = gametic;
+            LOGI("Ride: lost the way to the objective while things move; waiting for them");
+        }
+        g_objKind = keepKind;
+        g_objKey = keepKey;
+        g_objLine = keepLine;
+        g_routeState = ROUTE_NONE;
+        g_planHoldUntil = gametic + TICRATE;
+        free(cost);
+        free(parent);
+        free(closed);
+        return;
+    }
+    else if (keepPending)
+        LOGI("Ride: can't reach the objective any more; choosing another");
 
     // 3. The wanted exit, else the other one; never while a boss level's bosses live.
     int bossesLive = NearestBoss(mo, NULL) != NULL;
@@ -1613,8 +1686,12 @@ static void CheckObjective(mobj_t* mo)
     {
         if (g_progress >= g_routeLen - 2 || gametic > g_detourUntil)
         {
+            // Back to the objective the detour interrupted (PlanTour keeps it if it can).
             LOGI("Ride: detour over, planning again");
-            g_objKind = OBJ_NONE;
+            g_objKind = g_savedKind;
+            g_objLine = g_savedLine;
+            g_objKey = g_savedKey;
+            g_objColor = g_savedColor;
             g_routeState = ROUTE_NONE;
         }
         return;
