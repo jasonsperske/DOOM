@@ -37,7 +37,8 @@ import java.io.File
  * 20 times a second. Without a bike, the GO button stands in for pedalling.
  *
  * For testing without a bike, GO's stand-in pace (m/s) and resistance (0..1) can be set:
- * `--ef go_pace 4.5 --ef go_resistance 1`
+ * `--ef go_pace 4.5 --ef go_resistance 1`. Add `--ez go_hold true` to pedal at that pace without
+ * holding GO (for unattended test runs).
  *
  * The cadence that turns on auto-fire in ride mode defaults by skill level; set it with
  * `--ef autofire_rpm 70` (remembered; 0 returns to the default).
@@ -53,11 +54,12 @@ class DoomActivity : Activity(), DoomNative.Listener, SurfaceHolder.Callback {
     private val handler = Handler(Looper.getMainLooper())
     private val goPace by lazy { intent.getFloatExtra("go_pace", GO_PACE) }
     private val goResistance by lazy { intent.getFloatExtra("go_resistance", GO_RESISTANCE) }
+    private val goHold by lazy { intent.getBooleanExtra("go_hold", false) }
 
     private val feedBike = object : Runnable {
         override fun run() {
             val live = bike.isLive
-            val pace = if (live) bike.metersPerSecond else if (controls?.goHeld == true) goPace else 0f
+            val pace = if (live) bike.metersPerSecond else if (goHold || controls?.goHeld == true) goPace else 0f
             val resistance = if (live) bike.resistance.fraction else goResistance
             DoomNative.nativeSetBike(live, pace, resistance)
             controls?.bikeStatus = TouchControls.BikeStatus(live, bike.sensors.latest?.cadenceRpm ?: 0f, resistance)
