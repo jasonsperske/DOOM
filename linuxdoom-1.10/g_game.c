@@ -1030,6 +1030,14 @@ void G_DoCompleted (void)
     int             i; 
 	 
     gameaction = ga_nothing; 
+
+#ifdef __ANDROID__
+    // Episode totals for the screen after the closing text (ride.c, f_finale.c).
+    {
+	extern void RIDE_LevelCompleted (void);
+	RIDE_LevelCompleted ();
+    }
+#endif
  
     for (i=0 ; i<MAXPLAYERS ; i++) 
 	if (playeringame[i]) 
@@ -1382,6 +1390,13 @@ G_InitNew
 { 
     int             i; 
 	 
+#ifdef __ANDROID__
+    {
+	extern void RIDE_NewGame (void);
+	RIDE_NewGame ();
+    }
+#endif
+
     if (paused) 
     { 
 	paused = false; 

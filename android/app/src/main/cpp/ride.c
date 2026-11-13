@@ -7,12 +7,17 @@
 // - Speed comes from the bike's pace (cadence), so stopping pedalling stops the player.
 // - The player faces the nearest visible monster (or the one the rider touched) and strafes so
 //   the route is still followed; with no monster in sight the player faces along the route.
+// - Monster shots about to hit the player are sidestepped, and so are imps and other projectile
+//   throwers winding up an attack at the player: they aim where the player is as the shot leaves.
+//   This works even when the rider has stopped pedalling; a stopped rider brakes to a halt after.
 // - The route is a tour: the nearest key not yet held, then the nearest switch or trigger line that
 //   opens or moves something, and only then the exit (the secret exit on maps that lead to a
 //   secret level, so every level is played). Doors open as the player reaches them only if they
 //   are unlocked or the player has the key; doors and floors worked from elsewhere only once their
-//   line has been triggered. Lifts lower as the player reaches them. If the exit cannot be
-//   reached that way, doors and floors on the route are opened and moved regardless.
+//   line has been triggered. Lifts lower as the player reaches them. After triggering a line, the
+//   player holds still until what it moves stops, facing it (or a monster, which comes first) and
+//   still firing. If the exit cannot be reached that way, doors and floors on the route are opened
+//   and moved regardless.
 // - Reaching the exit line or switch ends the level.
 // - Holding a finger on a monster's sprite targets it and fires. Pedalling at or above the
 //   auto-fire cadence (by skill level, or set) fires at the nearest monster in sight on its own.
@@ -22,6 +27,9 @@
 //   teleporter into a deadly room).
 // - Pedal power (pace, scaled up by resistance) picks the weapon, from the pistol up to the BFG.
 //   The rocket launcher is only used when its splash cannot reach the player. Ammo is unlimited.
+// - Barrels: no shot is fired that would set off a barrel (or a chain of them) whose blast reaches
+//   the player. Targets with a clear shot are preferred; otherwise the rider backs away from the
+//   barrel and steps aside to take it out of the line of fire, for up to 3 seconds at a time.
 //
 // Everything here runs on the game thread except the RIDE_Set* inputs, which the UI thread
 // writes.
@@ -56,6 +64,7 @@ extern int viewwindowx, viewwindowy;
 // Tuning
 
 #define RIDE_TRACE      0       // 1: log position and progress once a second
+#define RIDE_COMBAT_LOG 0       // 1: log hits on the player and shots held back for barrels
 
 #define CELL            8       // grid cell size, map units
 #define CLEARANCE       16.5f   // half-size of the box kept clear of walls (the player's is 16)
@@ -93,6 +102,15 @@ extern int viewwindowx, viewwindowy;
 #define DETOUR_MIN      160.0f  // when stuck, detour to a random point this far ...
 #define DETOUR_MAX      640.0f  // ... up to this far (route distance), then plan again
 #define DETOUR_TICS     (10*TICRATE)  // give a detour up after this long
+#define MAX_BARRELS     256
+#define BARREL_BLAST    128.0f  // a barrel's blast: 128 damage less the distance (P_RadiusAttack)
+#define BARREL_MARGIN   24.0f   // ... and this much more room kept from it
+#define AIM_SLACK       0.06f   // radians either side of the aim allowed for turning and drift
+#define EVADE_MAX_TICS  (3*TICRATE)   // back away from a barrel at most this long ...
+#define EVADE_REST_TICS (2*TICRATE)   // ... then follow the route this long before trying again
+#define SHOT_TICS       35      // step out of the way of a shot arriving within this many tics ...
+#define SHOT_MARGIN     20.0f   // ... that would pass within this much of the player's edge
+#define DODGE_MOVE      40      // dodge at least this fast (of MAX_MOVE), pedalling or not
 
 // ---------------------------------------------------------------------------
 // Inputs from the UI thread
@@ -111,6 +129,11 @@ static int g_weapon = -1;          // weapon ride mode has chosen, or -1; read b
 static int g_tiers[8], g_numTiers;   // weapons from weakest to strongest in this game
 static int g_tier = -1;
 static int g_lastSwitchTic = -1000;
+
+// Episode totals (game thread)
+static ridestats_t g_stats;
+static float g_statsResistanceSum;   // resistance times seconds pedalling
+static int g_statsLeveltime;
 
 void RIDE_SetEnabled(int enabled)
 {
@@ -254,6 +277,12 @@ static int g_targetTapped;
 static int g_targetUnseen;
 static int g_stuckTics;
 static int g_nudgeSign = 1;  // which way to sidestep something blocking the route
+static mobj_t* g_barrels[MAX_BARRELS];   // live barrels, found again every tic
+static int g_numBarrels;
+static int g_evadeTics;      // tics spent backing away from a barrel in the line of fire
+static int g_evadeRestUntil; // no backing away before this tic
+static int g_evadeSide = 1;  // which way to step to take a barrel out of the line of fire
+static int g_dodging;        // stepping out of a shot's path last tic
 static int g_bestProgress;   // furthest route cell reached, and when: no progress for long is stuck
 static int g_bestProgressTic;
 static fixed_t g_stuckX, g_stuckY;
@@ -1558,18 +1587,22 @@ static int g_objSpecial;           // the objective line's special as it was tri
 
 // Is any door, floor or lift moving (perpetual lifts and crushers aside)? Planning mid-move sees
 // half-open doors and half-raised floors.
+// A door, floor or lift on the move (not a perpetual lift, which never stops).
+static int SectorMoving(sector_t* sec)
+{
+    thinker_t* th = sec->specialdata;
+    if (!th)
+        return 0;
+    if (th->function.acp1 == (actionf_p1)T_VerticalDoor || th->function.acp1 == (actionf_p1)T_MoveFloor)
+        return 1;
+    return th->function.acp1 == (actionf_p1)T_PlatRaise && ((plat_t*)th)->type != perpetualRaise;
+}
+
 static int AnythingMoving(void)
 {
     for (int s = 0; s < numsectors; s++)
-    {
-        thinker_t* th = sectors[s].specialdata;
-        if (!th)
-            continue;
-        if (th->function.acp1 == (actionf_p1)T_VerticalDoor || th->function.acp1 == (actionf_p1)T_MoveFloor)
+        if (SectorMoving(&sectors[s]))
             return 1;
-        if (th->function.acp1 == (actionf_p1)T_PlatRaise && ((plat_t*)th)->type != perpetualRaise)
-            return 1;
-    }
     return 0;
 }
 
@@ -1661,6 +1694,33 @@ static int Settling(void)
 static float Dist2(float ax, float ay, float bx, float by)
 {
     return (ax - bx) * (ax - bx) + (ay - by) * (ay - by);
+}
+
+// While holding still for sectors to move, the one to watch: the nearest moving sector the line
+// just triggered tags (floor or ceiling), else the nearest door, floor or lift on the move. NULL if
+// none, or if it is the one the player stands in.
+static sector_t* WatchedSector(mobj_t* mo)
+{
+    int tag = g_settleLine >= 0 ? lines[g_settleLine].tag : -1;
+    float px = mo->x / (float)FRACUNIT, py = mo->y / (float)FRACUNIT;
+    sector_t* best = NULL;
+    int bestTagged = 0;
+    float bestD = 0;
+    for (int s = 0; s < numsectors; s++)
+    {
+        sector_t* sec = &sectors[s];
+        int tagged = sec->tag == tag && sec->specialdata;
+        if (!tagged && !SectorMoving(sec))
+            continue;
+        float d = Dist2(px, py, sec->soundorg.x / (float)FRACUNIT, sec->soundorg.y / (float)FRACUNIT);
+        if (!best || tagged > bestTagged || (tagged == bestTagged && d < bestD))
+        {
+            best = sec;
+            bestTagged = tagged;
+            bestD = d;
+        }
+    }
+    return best == mo->subsector->sector ? NULL : best;
 }
 
 static int IsTeleportHop(int i)
@@ -2006,10 +2066,155 @@ static int ValidTarget(mobj_t* m)
            ((m->flags & MF_COUNTKILL) || m->type == MT_SKULL);
 }
 
-static mobj_t* NearestTarget(mobj_t* pmo)
+// ---------------------------------------------------------------------------
+// Barrels: a shot that sets one off, or a chain of them, next to the player hurts the player.
+
+static void FindBarrels(void)
+{
+    g_numBarrels = 0;
+    for (thinker_t* th = thinkercap.next; th != &thinkercap && g_numBarrels < MAX_BARRELS; th = th->next)
+    {
+        if (th->function.acp1 != (actionf_p1)P_MobjThinker)
+            continue;
+        mobj_t* m = (mobj_t*)th;
+        if (m->type == MT_BARREL && m->health > 0)
+            g_barrels[g_numBarrels++] = m;
+    }
+}
+
+// Where a weapon's shots can go: how far either side of the aim (radians), how wide each shot is,
+// and how far it reaches.
+static void WeaponSpread(int weapon, float* half, float* width, float* range)
+{
+    *half = AIM_SLACK;
+    *width = 0;
+    *range = MISSILERANGE / (float)FRACUNIT;
+    switch (weapon)
+    {
+      case wp_fist:
+      case wp_chainsaw:
+        *range = MELEERANGE / (float)FRACUNIT + 16;
+        break;
+      case wp_pistol:
+      case wp_chaingun:
+      case wp_shotgun:
+        *half += 0.098f;   // (P_Random() - P_Random()) << 18
+        break;
+      case wp_supershotgun:
+        *half += 0.196f;   // ... << 19
+        break;
+      case wp_missile:
+        *width = 11;       // the rocket's radius
+        break;
+      case wp_plasma:
+        *width = 13;
+        break;
+      case wp_bfg:
+        *half = 0.79f;     // its spray: 40 tracers across 90 degrees
+        *width = 13;
+        break;
+    }
+}
+
+// The blast reach P_RadiusAttack measures: the larger of the x and y distances, less the
+// victim's radius.
+static float BlastDistance(mobj_t* spot, mobj_t* victim)
+{
+    float dx = fabsf((victim->x - spot->x) / (float)FRACUNIT);
+    float dy = fabsf((victim->y - spot->y) / (float)FRACUNIT);
+    return (dx > dy ? dx : dy) - victim->radius / (float)FRACUNIT;
+}
+
+// Would firing `weapon` from the player along the unit vector (dirX, dirY) set off a barrel whose
+// blast, directly or through a chain of other barrels, reaches the player? If so, returns 1 with
+// the nearest barrel in the line of fire in *lit and the one whose blast reaches the player in
+// *hurts.
+static int BarrelDanger(mobj_t* mo, float dirX, float dirY, int weapon, mobj_t** lit, mobj_t** hurts)
+{
+    if (!g_numBarrels)
+        return 0;
+    float half, width, range;
+    WeaponSpread(weapon, &half, &width, &range);
+    float tanHalf = tanf(half);
+    float px = mo->x / (float)FRACUNIT, py = mo->y / (float)FRACUNIT;
+
+    // Barrels in the line of fire.
+    byte going[MAX_BARRELS];
+    int queue[MAX_BARRELS], n = 0;
+    mobj_t* firstLit = NULL;
+    float firstAlong = 0;
+    memset(going, 0, g_numBarrels);
+    for (int i = 0; i < g_numBarrels; i++)
+    {
+        mobj_t* b = g_barrels[i];
+        float bx = b->x / (float)FRACUNIT - px, by = b->y / (float)FRACUNIT - py;
+        float along = bx * dirX + by * dirY;
+        if (along <= 0 || along > range)
+            continue;
+        float lateral = fabsf(bx * dirY - by * dirX);
+        if (lateral > along * tanHalf + width + b->radius / (float)FRACUNIT)
+            continue;
+        if (!P_CheckSight(mo, b))
+            continue;
+        going[i] = 1;
+        queue[n++] = i;
+        if (!firstLit || along < firstAlong)
+        {
+            firstLit = b;
+            firstAlong = along;
+        }
+    }
+    if (!n)
+        return 0;
+
+    // Barrels those set off in turn.
+    for (int h = 0; h < n; h++)
+    {
+        mobj_t* a = g_barrels[queue[h]];
+        for (int j = 0; j < g_numBarrels; j++)
+            if (!going[j] && BlastDistance(a, g_barrels[j]) < BARREL_BLAST && P_CheckSight(a, g_barrels[j]))
+            {
+                going[j] = 1;
+                queue[n++] = j;
+            }
+    }
+
+    // The nearest of them whose blast reaches the player.
+    mobj_t* worst = NULL;
+    float worstD = BARREL_BLAST + BARREL_MARGIN;
+    for (int h = 0; h < n; h++)
+    {
+        mobj_t* a = g_barrels[queue[h]];
+        float d = BlastDistance(a, mo);
+        if (d < worstD && P_CheckSight(a, mo))
+        {
+            worst = a;
+            worstD = d;
+        }
+    }
+    if (!worst)
+        return 0;
+    *lit = firstLit;
+    *hurts = worst;
+    return 1;
+}
+
+static int BarrelDangerTowards(mobj_t* mo, mobj_t* target, int weapon, mobj_t** lit, mobj_t** hurts)
+{
+    float dx = (target->x - mo->x) / (float)FRACUNIT, dy = (target->y - mo->y) / (float)FRACUNIT;
+    float d = sqrtf(dx * dx + dy * dy);
+    if (d < 1)
+        return 0;
+    return BarrelDanger(mo, dx / d, dy / d, weapon, lit, hurts);
+}
+
+// The nearest monster in sight, preferring one that can be shot without setting off a barrel
+// next to the player.
+static mobj_t* NearestTarget(mobj_t* pmo, int weapon)
 {
     mobj_t* best = NULL;
-    float bestD = TARGET_RANGE * TARGET_RANGE;
+    mobj_t* risky = NULL;
+    float bestD = TARGET_RANGE * TARGET_RANGE, riskyD = bestD;
     for (thinker_t* th = thinkercap.next; th != &thinkercap; th = th->next)
     {
         if (th->function.acp1 != (actionf_p1)P_MobjThinker)
@@ -2019,13 +2224,21 @@ static mobj_t* NearestTarget(mobj_t* pmo)
             continue;
         float d = Dist2(pmo->x / (float)FRACUNIT, pmo->y / (float)FRACUNIT,
                         m->x / (float)FRACUNIT, m->y / (float)FRACUNIT);
-        if (d < bestD && P_CheckSight(pmo, m))
+        if (d >= bestD || !P_CheckSight(pmo, m))
+            continue;
+        mobj_t *lit, *hurts;
+        if (!BarrelDangerTowards(pmo, m, weapon, &lit, &hurts))
         {
             bestD = d;
             best = m;
         }
+        else if (d < riskyD)
+        {
+            riskyD = d;
+            risky = m;
+        }
     }
-    return best;
+    return best ? best : risky;
 }
 
 // The monster drawn under the touch, using the sprites of the last frame drawn.
@@ -2062,6 +2275,144 @@ static int TurnTowards(angle_t current, angle_t wanted, int maxTurn)
 {
     int delta = (int)(wanted - current) >> 16;   // signed, 65536 per turn
     return Clamp(delta / 2, -maxTurn, maxTurn);
+}
+
+// Of 16 headings clear of walls for 48 units, the one nearest the wanted direction (wx, wy).
+// *score: the cosine between them, or -2 if every way is blocked.
+static angle_t ClearHeading(mobj_t* mo, float wx, float wy, float* score)
+{
+    float px = mo->x / (float)FRACUNIT, py = mo->y / (float)FRACUNIT;
+    float len = sqrtf(wx * wx + wy * wy);
+    int here = CellAt(px, py);
+    int onHazard = here >= 0 && (g_cellFlags[here] & CF_HAZARD);
+    float bestScore = -2;
+    float bestX = wx, bestY = wy;
+    for (int k = 0; k < 16; k++)
+    {
+        float hx = cosf(k * (float)M_PI / 8), hy = sinf(k * (float)M_PI / 8);
+        if (!ClearPath(px, py, px + hx * 48, py + hy * 48))
+            continue;
+        // Nor onto damaging floor, as far as the player may slide.
+        int hazard = 0;
+        for (int r = CELL; r <= 96 && !onHazard && !hazard; r += CELL)
+        {
+            int c = CellAt(px + hx * r, py + hy * r);
+            hazard = c >= 0 && (g_cellFlags[c] & CF_HAZARD);
+        }
+        if (hazard)
+            continue;
+        float s = len > 0 ? (hx * wx + hy * wy) / len : 0;
+        if (s > bestScore) { bestScore = s; bestX = hx; bestY = hy; }
+    }
+    *score = bestScore;
+    return R_PointToAngle2(mo->x, mo->y, mo->x + (fixed_t)(bestX * 64 * FRACUNIT), mo->y + (fixed_t)(bestY * 64 * FRACUNIT));
+}
+
+// Is this monster winding up a projectile attack (imp, cacodemon, baron and the like)? They aim at
+// where the player is when the shot leaves, so being on the move by then makes it miss.
+static int WindingUp(mobj_t* m)
+{
+    switch (m->type)
+    {
+      case MT_TROOP: case MT_HEAD: case MT_BRUISER: case MT_KNIGHT: case MT_UNDEAD:
+      case MT_FATSO: case MT_BABY: case MT_CYBORG:
+        break;
+      default:
+        return 0;
+    }
+    int st = mobjinfo[m->type].missilestate;
+    for (int i = 0; i < 12 && st != S_NULL && st != mobjinfo[m->type].seestate; i++)
+    {
+        if (m->state == &states[st])
+            return 1;
+        st = states[st].nextstate;
+    }
+    return 0;
+}
+
+// A side step across the line (dx, dy), preferring the way we are going and then the side that is
+// open.
+static void SideStep(float px, float py, float dx, float dy, float moveX, float moveY, float* sx, float* sy)
+{
+    float len = sqrtf(dx * dx + dy * dy);
+    *sx = -dy / len;
+    *sy = dx / len;
+    if (*sx * moveX + *sy * moveY < 0)
+        *sx = -*sx, *sy = -*sy;
+    if (!ClearPath(px, py, px + *sx * 48, py + *sy * 48))
+        *sx = -*sx, *sy = -*sy;
+}
+
+// Monster shots about to hit the player: which way to step out of their paths, as a vector that is
+// longer the more urgent, in *outX, *outY. Monsters winding up a shot at the player count too.
+// Returns how many threats there are. (moveX, moveY): the way the player means to go, to pick a side
+// when a shot is coming straight on.
+static int ShotDodge(mobj_t* mo, float moveX, float moveY, float* outX, float* outY)
+{
+    float px = mo->x / (float)FRACUNIT, py = mo->y / (float)FRACUNIT;
+    float pvx = mo->momx / (float)FRACUNIT, pvy = mo->momy / (float)FRACUNIT;
+    float wx = 0, wy = 0;
+    int n = 0;
+    for (thinker_t* th = thinkercap.next; th != &thinkercap; th = th->next)
+    {
+        if (th->function.acp1 != (actionf_p1)P_MobjThinker)
+            continue;
+        mobj_t* m = (mobj_t*)th;
+        if (m->health > 0 && m->target == mo && WindingUp(m) && P_CheckSight(m, mo))
+        {
+            // About to throw: get moving across its aim, and back off one that is close enough
+            // to claw instead.
+            float dx = px - m->x / (float)FRACUNIT, dy = py - m->y / (float)FRACUNIT;
+            float d = sqrtf(dx * dx + dy * dy);
+            if (d < 1)
+                continue;
+            float sx, sy;
+            SideStep(px, py, dx, dy, moveX, moveY, &sx, &sy);
+            wx += sx * 1.5f;
+            wy += sy * 1.5f;
+            if (d < 128)
+            {
+                wx += dx / d;
+                wy += dy / d;
+            }
+            n++;
+            continue;
+        }
+        // Shots, and lost souls charging: anything flying that isn't ours.
+        if (!((m->flags & MF_MISSILE) && m->target != mo) && !((m->flags & MF_SKULLFLY) && m != mo))
+            continue;
+        // Its path relative to the player, who may already be stepping aside.
+        float vx = m->momx / (float)FRACUNIT - pvx, vy = m->momy / (float)FRACUNIT - pvy;
+        float vv = vx * vx + vy * vy;
+        if (vv < 1)
+            continue;
+        float rx = px - m->x / (float)FRACUNIT, ry = py - m->y / (float)FRACUNIT;
+        float t = (rx * vx + ry * vy) / vv;   // tics until closest
+        if (t < 0 || t > SHOT_TICS)
+            continue;
+        float cx = rx - vx * t, cy = ry - vy * t;   // from the shot's path to the player
+        float miss = sqrtf(cx * cx + cy * cy);
+        float reach = (mo->radius + m->radius) / (float)FRACUNIT + SHOT_MARGIN;
+        if (miss > reach)
+            continue;
+        // Passing over or under (fired from a ledge, say)?
+        float mz = (m->z + m->momz * t) / (float)FRACUNIT;
+        if (mz > (mo->z + mo->height) / (float)FRACUNIT + 8 || mz + m->height / (float)FRACUNIT < mo->z / (float)FRACUNIT - 8)
+            continue;
+        if (miss < 4)
+        {
+            // Straight on: step to the side that is open, preferring the way we are going.
+            SideStep(px, py, vx, vy, moveX, moveY, &cx, &cy);
+            miss = 1;
+        }
+        float urgency = 2.0f * (1 - miss / reach) + 2.0f * (1 - t / SHOT_TICS) + 1.0f;
+        wx += cx / miss * urgency;
+        wy += cy / miss * urgency;
+        n++;
+    }
+    *outX = wx;
+    *outY = wy;
+    return n;
 }
 
 // The way to move while fighting a boss: circle it between BOSS_KEEP_MIN and BOSS_KEEP_MAX,
@@ -2117,18 +2468,8 @@ static angle_t BossSteer(mobj_t* mo, mobj_t* boss)
         wy += cy / miss * urgency;
     }
 
-    // Best clear heading of 16.
-    float bestScore = -2;
-    float bestX = wx, bestY = wy;
-    for (int k = 0; k < 16; k++)
-    {
-        float hx = cosf(k * (float)M_PI / 8), hy = sinf(k * (float)M_PI / 8);
-        if (!ClearPath(px, py, px + hx * 48, py + hy * 48))
-            continue;
-        float len = sqrtf(wx * wx + wy * wy);
-        float score = len > 0 ? (hx * wx + hy * wy) / len : 0;
-        if (score > bestScore) { bestScore = score; bestX = hx; bestY = hy; }
-    }
+    float bestScore;
+    angle_t heading = ClearHeading(mo, wx, wy, &bestScore);
 
     // Boxed in on this side: go round the other way.
     if (bestScore < 0.2f)
@@ -2142,7 +2483,35 @@ static angle_t BossSteer(mobj_t* mo, mobj_t* boss)
     else
         g_orbitBlocked = 0;
 
-    return R_PointToAngle2(mo->x, mo->y, mo->x + (fixed_t)(bestX * 64 * FRACUNIT), mo->y + (fixed_t)(bestY * 64 * FRACUNIT));
+    return heading;
+}
+
+// Back away from a barrel whose blast would reach the player, and step sideways to take the
+// barrel in the line of fire out of it, towards the target. (dirX, dirY): unit vector to the
+// target.
+static angle_t BarrelSteer(mobj_t* mo, mobj_t* lit, mobj_t* hurts, float dirX, float dirY)
+{
+    float px = mo->x / (float)FRACUNIT, py = mo->y / (float)FRACUNIT;
+    float ax = px - hurts->x / (float)FRACUNIT, ay = py - hurts->y / (float)FRACUNIT;
+    float d = sqrtf(ax * ax + ay * ay);
+    if (d < 1) { ax = -dirX; ay = -dirY; d = 1; }
+    // The nearer the blast, the more backing away matters than a clear shot.
+    float away = 0.5f + (BARREL_BLAST + BARREL_MARGIN - BlastDistance(hurts, mo)) / BARREL_BLAST;
+    float wx = ax / d * away, wy = ay / d * away;
+
+    // Step to the side of the line the barrel isn't on: that swings the line away from it.
+    float lx = lit->x / (float)FRACUNIT - px, ly = lit->y / (float)FRACUNIT - py;
+    float cross = dirX * ly - dirY * lx;   // > 0: barrel left of the line
+    if (fabsf(cross) > 4)
+        g_evadeSide = cross > 0 ? -1 : 1;
+    wx += -dirY * g_evadeSide;   // (-dirY, dirX) is left; g_evadeSide -1 steps right
+    wy += dirX * g_evadeSide;
+
+    float score;
+    angle_t heading = ClearHeading(mo, wx, wy, &score);
+    if (score < 0.2f && fabsf(cross) <= 4)
+        g_evadeSide = -g_evadeSide;   // walled in on this side: try the other
+    return heading;
 }
 
 // ---------------------------------------------------------------------------
@@ -2254,6 +2623,34 @@ int RIDE_Objective(void)
     return code | (g_magic ? 16 : 0);
 }
 
+void RIDE_NewGame(void)
+{
+    memset(&g_stats, 0, sizeof g_stats);
+    g_statsResistanceSum = 0;
+    g_statsLeveltime = 0;
+}
+
+void RIDE_LevelCompleted(void)
+{
+    if (demoplayback)
+        return;
+    player_t* p = &players[consoleplayer];
+    g_stats.levels++;
+    g_stats.seconds += leveltime / TICRATE;
+    g_stats.kills += p->killcount;
+    g_stats.maxKills += totalkills;
+    g_stats.items += p->itemcount;
+    g_stats.maxItems += totalitems;
+    g_stats.secrets += p->secretcount;
+    g_stats.maxSecrets += totalsecret;
+}
+
+void RIDE_EpisodeStats(ridestats_t* out)
+{
+    *out = g_stats;
+    out->resistance = g_stats.ridingSeconds > 0 ? g_statsResistanceSum / g_stats.ridingSeconds : 0;
+}
+
 int RIDE_HasTarget(void)
 {
     return g_target != NULL;
@@ -2281,6 +2678,23 @@ void RIDE_BuildTiccmd(ticcmd_t* cmd)
         g_power = speed * (0.4f + 0.6f * resistance);
     }
 
+    // Episode totals: distance and pedalling, for each game tic played (none while paused).
+    if (gamestate == GS_LEVEL && !demoplayback)
+    {
+        int dt = leveltime - g_statsLeveltime;
+        g_statsLeveltime = leveltime;
+        if (dt > 0 && dt <= TICRATE)
+        {
+            float secs = dt / (float)TICRATE;
+            g_stats.meters += pace * secs;
+            if (pace >= 0.2f)
+            {
+                g_stats.ridingSeconds += secs;
+                g_statsResistanceSum += resistance * secs;
+            }
+        }
+    }
+
     if (gamestate != GS_LEVEL || demoplayback || netgame)
         return;
 
@@ -2288,6 +2702,28 @@ void RIDE_BuildTiccmd(ticcmd_t* cmd)
     mobj_t* mo = player->mo;
     if (!mo)
         return;
+
+    if (RIDE_COMBAT_LOG)
+    {
+        static int lastHealth = 100;
+        if (player->health < lastHealth)
+        {
+            mobj_t* src = player->attacker;
+            int boom = 0;   // barrels near the player in their death (explosion) frames
+            for (thinker_t* th = thinkercap.next; th != &thinkercap; th = th->next)
+            {
+                if (th->function.acp1 != (actionf_p1)P_MobjThinker)
+                    continue;
+                mobj_t* m = (mobj_t*)th;
+                if (m->type == MT_BARREL && m->health <= 0 && BlastDistance(m, mo) < BARREL_BLAST)
+                    boom++;
+            }
+            LOGI("Ride damage: %d -> %d, attacker %s%d, exploding barrels near %d, sector special %d",
+                 lastHealth, player->health, src == mo ? "self " : src ? "type " : "none ",
+                 src && src != mo ? (int)src->type : 0, boom, mo->subsector->sector->special);
+        }
+        lastHealth = player->health;
+    }
 
     // Unlimited ammo, in ride and free mode alike.
     for (int a = 0; a < NUMAMMO; a++)
@@ -2304,6 +2740,8 @@ void RIDE_BuildTiccmd(ticcmd_t* cmd)
         g_objKind = OBJ_NONE;
         g_objStucks = 0;
         g_settleLine = -1;
+        g_evadeTics = 0;
+        g_evadeRestUntil = 0;
         FreeLevel();
         BuildGrid();
         g_gridKeys = KeyMask();
@@ -2348,10 +2786,13 @@ void RIDE_BuildTiccmd(ticcmd_t* cmd)
         LOGI("Ride: %s", g_fighting ? "fighting the boss" : "not fighting");
 
     float x = mo->x / (float)FRACUNIT, y = mo->y / (float)FRACUNIT;
-    if (!g_fighting)
+    // A line just triggered, or something is moving: hold still and let it finish first, watching
+    // it, but keep fighting.
+    int holding = !g_fighting && (Settling() || (g_routeState == ROUTE_NONE && gametic < g_planHoldUntil));
+    if (g_fighting)
+        g_routeState = ROUTE_NONE;   // plan afresh after the fight
+    else if (!holding)
     {
-        if (Settling() || (g_routeState == ROUTE_NONE && gametic < g_planHoldUntil))
-            return;   // a line just triggered, or something is moving: let it finish first
         if (g_routeState == ROUTE_NONE)
         {
             if (boss)
@@ -2396,8 +2837,6 @@ void RIDE_BuildTiccmd(ticcmd_t* cmd)
             OpenTheWay(mo);
         }
     }
-    else
-        g_routeState = ROUTE_NONE;   // plan afresh after the fight
 
     // Targeting
     if (touchDown)
@@ -2422,8 +2861,9 @@ void RIDE_BuildTiccmd(ticcmd_t* cmd)
     }
     else
         g_targetUnseen = 0;
+    FindBarrels();
     if (!g_targetTapped && gametic % TARGET_TICS == 0)
-        g_target = NearestTarget(mo);
+        g_target = NearestTarget(mo, player->readyweapon);
 
     ChooseWeapon(player);
 
@@ -2435,6 +2875,16 @@ void RIDE_BuildTiccmd(ticcmd_t* cmd)
         if (!g_targetTapped || !g_target)
             g_target = boss;   // keep the boss in front
     }
+    else if (holding)
+    {
+        // Face what is moving, unless a monster needs facing (faceAngle below).
+        sector_t* watch = WatchedSector(mo);
+        static sector_t* lastWatch;
+        if (watch && watch != lastWatch)
+            LOGI("Ride: waiting; watching sector %d (tag %d) move", SectorIndex(watch), watch->tag);
+        lastWatch = watch;
+        moveAngle = watch ? R_PointToAngle2(mo->x, mo->y, watch->soundorg.x, watch->soundorg.y) : mo->angle;
+    }
     else
     {
         float tx, ty;
@@ -2442,19 +2892,96 @@ void RIDE_BuildTiccmd(ticcmd_t* cmd)
         moveAngle = R_PointToAngle2(mo->x, mo->y, (fixed_t)(tx * FRACUNIT), (fixed_t)(ty * FRACUNIT));
     }
     // Blocked for a second (usually a monster in the way): sidestep, a different side each time.
-    if (!g_fighting && g_stuckTics > TICRATE)
+    if (!g_fighting && !holding && g_stuckTics > TICRATE)
     {
         if (g_stuckTics % TICRATE == 0)
             g_nudgeSign = -g_nudgeSign;
         moveAngle += g_nudgeSign * (ANG45 + ANG45 / 3);
     }
+
+    // Shooting the target would set off a barrel whose blast reaches us: back away from it and
+    // step aside for a clear shot (fire is held below until the shot is safe). Only for a while,
+    // so a barrel can't hold the rider back for good.
+    g_autofiring = pace / MPS_PER_RPM >= RIDE_AutofireRpm();
+    int wantFire = g_target && ((touchDown && g_targetTapped) || (g_autofiring && P_CheckSight(mo, g_target)));
+    int evading = 0;
+    mobj_t *lit, *hurts;
+    if (wantFire && !holding && gametic >= g_evadeRestUntil &&
+        BarrelDangerTowards(mo, g_target, player->readyweapon, &lit, &hurts))
+    {
+        if (g_evadeTics++ == 0)
+            LOGI("Ride: barrel in the line of fire, backing away");
+        if (g_evadeTics > EVADE_MAX_TICS)
+        {
+            LOGI("Ride: still no safe shot; riding on");
+            g_evadeTics = 0;
+            g_evadeRestUntil = gametic + EVADE_REST_TICS;
+        }
+        else
+        {
+            float dx = (g_target->x - mo->x) / (float)FRACUNIT, dy = (g_target->y - mo->y) / (float)FRACUNIT;
+            float d = sqrtf(dx * dx + dy * dy);
+            if (d < 1) d = 1;
+            moveAngle = BarrelSteer(mo, lit, hurts, dx / d, dy / d);
+            evading = 1;
+        }
+    }
+    else
+    {
+        if (g_evadeTics)
+            LOGI("Ride: %s after %.1f s", !g_target ? "target gone" : wantFire ? "clear shot" : "stopped firing",
+                 g_evadeTics / (float)TICRATE);
+        g_evadeTics = 0;
+    }
+
+    // Shots on their way: step out of their paths, even if the rider has stopped pedalling, but
+    // not off a lift that is carrying us. Boss fights dodge in BossSteer.
+    int dodging = 0;
+    if (!g_fighting && !(holding && mo->subsector->sector->specialdata))
+    {
+        int fine = moveAngle >> ANGLETOFINESHIFT;
+        int going = pace >= 0.2f && !holding;   // weigh the way we are going only if we are going
+        float mx = going ? finecosine[fine] / (float)FRACUNIT : 0, my = going ? finesine[fine] / (float)FRACUNIT : 0;
+        float dx, dy, score;
+        int shots = ShotDodge(mo, finecosine[fine] / (float)FRACUNIT, finesine[fine] / (float)FRACUNIT, &dx, &dy);
+        if (shots)
+        {
+            angle_t dodge = ClearHeading(mo, mx + dx, my + dy, &score);
+            if (score > -2)
+            {
+                if (!g_dodging)
+                    LOGI("Ride: dodging (%d threat%s)", shots, shots > 1 ? "s" : "");
+                moveAngle = dodge;
+                dodging = 1;
+            }
+        }
+    }
+    g_dodging = dodging;
+
     angle_t faceAngle = g_target ? R_PointToAngle2(mo->x, mo->y, g_target->x, g_target->y) : moveAngle;
     int turn = TurnTowards(mo->angle, faceAngle, g_target ? 1536 : 1024);
 
     float speedFrac = pace / FULL_PACE;
     if (speedFrac > 1) speedFrac = 1;
-    if (pace < 0.2f) speedFrac = 0;
+    if (pace < 0.2f || holding) speedFrac = 0;
     int speed = (int)(speedFrac * MAX_MOVE);
+    if (dodging && speed < DODGE_MOVE)
+        speed = DODGE_MOVE;
+
+    // Not going anywhere (stopped pedalling, or waiting) and not dodging: brake against any
+    // slide left over from a dodge, so a stopped rider stays where they stopped.
+    int braking = 0;
+    if (speed == 0 && !dodging && !g_fighting && !(holding && mo->subsector->sector->specialdata))
+    {
+        float vx = mo->momx / (float)FRACUNIT, vy = mo->momy / (float)FRACUNIT;
+        float v = sqrtf(vx * vx + vy * vy);
+        if (v > 1)
+        {
+            moveAngle = R_PointToAngle2(0, 0, -mo->momx, -mo->momy);
+            speed = v * 8 > MAX_MOVE ? MAX_MOVE : (int)(v * 8);
+            braking = 1;
+        }
+    }
 
     angle_t rel = moveAngle - (mo->angle + ((angle_t)turn << 16));
     int fine = rel >> ANGLETOFINESHIFT;
@@ -2472,15 +2999,24 @@ void RIDE_BuildTiccmd(ticcmd_t* cmd)
 
     // Fire while the rider holds a monster, or at any monster in sight while pedalling at the
     // auto-fire cadence, once roughly facing it.
-    g_autofiring = pace / MPS_PER_RPM >= RIDE_AutofireRpm();
     cmd->buttons &= ~BT_ATTACK;
-    if (g_target && ((touchDown && g_targetTapped) || (g_autofiring && P_CheckSight(mo, g_target))))
+    if (wantFire)
     {
         int off = (int)(faceAngle - mo->angle);
         if (off < 0) off = -off;
-        // Never a rocket at something inside its blast.
+        // Never a rocket at something inside its blast, nor a shot that sets off a barrel
+        // next to us. The shot goes where we face, so check along that.
+        int aim = mo->angle >> ANGLETOFINESHIFT;
         if (off < (int)(ANG45 / 4) && (player->readyweapon != wp_missile || RocketSafe(mo, 0)))
-            cmd->buttons |= BT_ATTACK;
+        {
+            if (!BarrelDanger(mo, finecosine[aim] / (float)FRACUNIT, finesine[aim] / (float)FRACUNIT,
+                              player->readyweapon, &lit, &hurts))
+                cmd->buttons |= BT_ATTACK;
+            else if (RIDE_COMBAT_LOG && gametic % (TICRATE / 2) == 0)
+                LOGI("Ride: holding fire, barrel %.0f units ahead would blast us from %.0f",
+                     sqrtf(Dist2(x, y, lit->x / (float)FRACUNIT, lit->y / (float)FRACUNIT)),
+                     BlastDistance(hurts, mo));
+        }
     }
     if (!touchDown)
         g_targetTapped = 0;
@@ -2499,7 +3035,7 @@ void RIDE_BuildTiccmd(ticcmd_t* cmd)
         g_bestProgress = g_progress;
         g_bestProgressTic = gametic;
     }
-    if (speed == 0 || waiting || g_fighting)
+    if (speed == 0 || braking || waiting || g_fighting || evading || dodging)
         g_bestProgressTic = gametic;
     if (gametic - g_bestProgressTic > 2 * STUCK_TICS)
     {
@@ -2508,7 +3044,7 @@ void RIDE_BuildTiccmd(ticcmd_t* cmd)
         g_stuckX = mo->x;
         g_stuckY = mo->y;
     }
-    if (speed > 0 && !g_fighting)
+    if (speed > 0 && !braking && !g_fighting && !evading && !dodging && !holding)
     {
         if (abs(mo->x - g_stuckX) + abs(mo->y - g_stuckY) > 8 * FRACUNIT)
         {

@@ -79,6 +79,8 @@ Each level is ridden as a tour, and the bike drives:
   - Without a bike, GO counts as 3 m/s at half resistance: 47%, the shotgun.
   - The left edge shows cadence, resistance, power and the weapon.
 - **Rockets only when they can't hurt you.** The launcher is used, and fires, only at a target at least 256 units away with no monster within 192 units of you. Otherwise the next weapon down is used, and rockets come back once there is 64 units more room.
+- **Barrels are not shot next to you.** No shot is fired that would set off a barrel, or a chain of barrels, whose blast reaches you. The check allows for each weapon's spread, the width of rockets and plasma, and the BFG's spray. Targets with a clear shot come first. If the only target is behind such a barrel, you back away from the barrel and step to the side to clear the line of fire, for up to 3 seconds. After that you ride on for 2 seconds, still holding fire, before trying again.
+- **Shots are dodged.** When a fireball or other monster shot would pass within 20 units of you in the next 35 tics, you step out of its path, choosing a side that is clear of walls and damaging floor. A charging lost soul counts as a shot. Imps, cacodemons, barons and other projectile throwers that are winding up an attack at you also make you start moving sideways. They aim at where you are when the shot leaves, so moving by then makes it miss. Dodging works even when you've stopped pedalling, but not while a lift is carrying you. A stopped rider brakes to a halt afterwards.
 - **Ammo is unlimited** for every weapon, in ride and free mode.
 - **Boss levels** end when the bosses die, not at an exit: E1M8 (two Barons of Hell) and the other episode finales. These play differently:
   - The route leads to the bosses.
@@ -87,12 +89,14 @@ Each level is ridden as a tour, and the bike drives:
   - When the bosses are dead and their walls (tag 666) have lowered, a new route takes you on. On E1M8 that is up the stairs to the teleporter, into the room that ends the episode.
 - **FREE** switches to the touch controls below; **RIDE** switches back. If no route to the exit can be found, the touch controls are used.
 - When you die, touch the screen to restart.
+- **Between levels** the stats screen moves on by itself 8 seconds after its counts finish, then the "Entering" screen moves on after 4 seconds as usual. USE skips either one.
+- **At the end of an episode**, after the closing text, a totals screen shows the distance pedalled, time pedalling, average speed and resistance, kills, secrets, and levels played. Press USE to go on to the episode's end picture. Totals start afresh whenever a game starts, so loading a saved game also starts them afresh.
 
 How the route is planned (`app/src/main/cpp/ride.c`):
 
 1. The map is rasterised into 8-unit cells marking where the player's 30x30 box fits. Cells whose box touches a wall, a ledge too high to climb, a too-low ceiling or solid scenery are blocked.
 2. Lifts are planned at any height they reach. Doors are planned open only if they are unlocked, you hold their key, or their line has been triggered. Floors moved by a triggered line that can still act (including staircases, built as `EV_BuildStairs` would) are planned at any height they can reach. The grid is rebuilt whenever a key is picked up or a line triggered.
-3. A flood fill (Dijkstra) from the player finds everything reachable, then picks the objective: the nearest key, otherwise the nearest worthwhile line (one that opens doors, moves floors or builds stairs; lines with the same action and tag count as one), otherwise the wanted exit, otherwise the other exit or a sector that ends the level (special 11). Teleporters count as links. After a line is triggered, the rider waits up to 10 seconds for its doors and floors to stop moving before planning again. Objectives that get the rider stuck three times, or that can't be reached from the end of their route, are dropped. Bosses are found with A*.
+3. A flood fill (Dijkstra) from the player finds everything reachable, then picks the objective: the nearest key, otherwise the nearest worthwhile line (one that opens doors, moves floors or builds stairs; lines with the same action and tag count as one), otherwise the wanted exit, otherwise the other exit or a sector that ends the level (special 11). Teleporters count as links. After a line is triggered, the rider waits up to 10 seconds for its doors and floors to stop moving before planning again. While waiting, they turn to face the nearest sector the line moves, unless a monster needs facing, and keep targeting and firing. Objectives that get the rider stuck three times, or that can't be reached from the end of their route, are dropped. Bosses are found with A*.
 4. Each tic, the player steers at the farthest route cell that is in a straight line and doesn't brush a wall. When blocked (usually by a monster), they sidestep, alternating sides each second. They re-plan when knocked off the route or teleported.
 5. **Getting unstuck.** The rider counts as stuck after 4 seconds without moving, or 8 seconds pedalling without getting further along the route; waiting for a lift or door doesn't count. A stuck rider takes a detour:
    - It picks a random reachable point 160–640 units away, clear of walls and away from where it stuck, rides there (DETOUR on the readout), then plans again from there.
@@ -145,7 +149,7 @@ Changes to the engine sources in `linuxdoom-1.10/`:
 - **ARM:** built with `-fsigned-char`, because `ticcmd_t`'s movement fields are plain `char`.
 - **Bionic:** no `<values.h>`; `boolean` coexists with `<stdbool.h>`.
 - **Touch (`__ANDROID__` only):** Quit Game quits at once, with no "press y" prompt; Enter answers "yes" in other prompts; an empty save slot gets a default name, the tic loop sleeps instead of spinning, and 8 sound channels by default.
-- **Ride mode (`__ANDROID__` only):** `G_BuildTiccmd` hands the ticcmd to `RIDE_BuildTiccmd` and `P_SetupLevel` calls `RIDE_LevelLoaded`, and `vissprite_t` records its `mobj` so a touch can find the monster under it.
+- **Ride mode (`__ANDROID__` only):** `G_BuildTiccmd` hands the ticcmd to `RIDE_BuildTiccmd` and `P_SetupLevel` calls `RIDE_LevelLoaded`, and `vissprite_t` records its `mobj` so a touch can find the monster under it. `G_InitNew` and `G_DoCompleted` call `RIDE_NewGame` and `RIDE_LevelCompleted` for the episode totals. `F_Ticker` and `F_Drawer` show the totals (finale stage 3) between the closing text and the end picture, and `WI_updateStats` moves on by itself after 8 seconds.
 
 ## Bike library
 

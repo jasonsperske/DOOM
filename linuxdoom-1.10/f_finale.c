@@ -238,9 +238,36 @@ void F_Ticker (void)
     if ( gamemode == commercial)
 	return;
 		
+#ifdef __ANDROID__
+    // The episode totals (stage 3) stay up until USE or FIRE is pressed.
+    if (finalestage == 3)
+    {
+	static boolean released;
+	int buttons = players[consoleplayer].cmd.buttons & (BT_USE | BT_ATTACK);
+	if (finalecount == 1)
+	    released = false;
+	if (!buttons)
+	    released = true;
+	else if (released && finalecount > TICRATE)
+	{
+	    finalecount = 0;
+	    finalestage = 1;
+	    wipegamestate = -1;
+	    if (gameepisode == 3)
+		S_StartMusic (mus_bunny);
+	}
+	return;
+    }
+#endif
+
     if (!finalestage && finalecount>strlen (finaletext)*TEXTSPEED + TEXTWAIT)
     {
 	finalecount = 0;
+#ifdef __ANDROID__
+	finalestage = 3;		// the episode totals, then the picture
+	wipegamestate = -1;
+	return;
+#endif
 	finalestage = 1;
 	wipegamestate = -1;		// force a wipe
 	if (gameepisode == 3)
@@ -325,6 +352,105 @@ void F_TextWrite (void)
     }
 	
 }
+
+#ifdef __ANDROID__
+//
+// F_StatsWrite: the episode's totals (ride.c), on the closing text's background.
+//
+#include <stdio.h>
+#include <string.h>
+#include "ride.h"
+
+static int F_HuWidth (const char* s)
+{
+    int w = 0;
+    for ( ; *s ; s++)
+    {
+	int c = toupper(*s) - HU_FONTSTART;
+	w += (c < 0 || c >= HU_FONTSIZE) ? 4 : SHORT (hu_font[c]->width);
+    }
+    return w;
+}
+
+static void F_HuWrite (int x, int y, const char* s)
+{
+    for ( ; *s ; s++)
+    {
+	int c = toupper(*s) - HU_FONTSTART;
+	if (c < 0 || c >= HU_FONTSIZE)
+	{
+	    x += 4;
+	    continue;
+	}
+	V_DrawPatch (x, y, 0, hu_font[c]);
+	x += SHORT (hu_font[c]->width);
+    }
+}
+
+static void F_FormatTime (char* out, int secs)
+{
+    if (secs >= 3600)
+	sprintf (out, "%d:%02d:%02d", secs / 3600, secs / 60 % 60, secs % 60);
+    else
+	sprintf (out, "%d:%02d", secs / 60, secs % 60);
+}
+
+void F_StatsWrite (void)
+{
+    byte*	src;
+    byte*	dest;
+    int		x, y;
+    ridestats_t	st;
+    char	value[32];
+    char	title[32];
+    const char*	label[8];
+    char	values[8][32];
+    int		n = 0;
+
+    // the closing text's tiled background
+    src = W_CacheLumpName ( finaleflat , PU_CACHE);
+    dest = screens[0];
+    for (y=0 ; y<SCREENHEIGHT ; y++)
+	for (x=0 ; x<SCREENWIDTH ; x++)
+	    *dest++ = src[((y&63)<<6) + (x&63)];
+    V_MarkRect (0, 0, SCREENWIDTH, SCREENHEIGHT);
+
+    RIDE_EpisodeStats (&st);
+
+    sprintf (title, "EPISODE %d TOTALS", gameepisode);
+    F_HuWrite ((SCREENWIDTH - F_HuWidth (title)) / 2, 16, title);
+
+    label[n] = "DISTANCE";
+    sprintf (values[n++], "%.1f KM", st.meters / 1000);
+    label[n] = "TIME PEDALLING";
+    F_FormatTime (values[n++], (int)st.ridingSeconds);
+    label[n] = "AVG SPEED";
+    if (st.ridingSeconds > 0)
+	sprintf (values[n++], "%.1f KM/H", st.meters / st.ridingSeconds * 3.6f);
+    else
+	strcpy (values[n++], "-");
+    label[n] = "AVG RESISTANCE";
+    if (st.ridingSeconds > 0)
+	sprintf (values[n++], "%d%%", (int)(st.resistance * 100 + 0.5f));
+    else
+	strcpy (values[n++], "-");
+    label[n] = "KILLS";
+    sprintf (values[n++], "%d / %d", st.kills, st.maxKills);
+    label[n] = "SECRETS";
+    sprintf (values[n++], "%d / %d", st.secrets, st.maxSecrets);
+    label[n] = "LEVELS";
+    F_FormatTime (value, st.seconds);
+    sprintf (values[n++], "%d IN %s", st.levels, value);
+
+    for (x = 0 ; x < n ; x++)
+    {
+	F_HuWrite (40, 44 + x * 16, label[x]);
+	F_HuWrite (SCREENWIDTH - 40 - F_HuWidth (values[x]), 44 + x * 16, values[x]);
+    }
+
+    F_HuWrite ((SCREENWIDTH - F_HuWidth ("PRESS USE TO CONTINUE")) / 2, 178, "PRESS USE TO CONTINUE");
+}
+#endif
 
 //
 // Final DOOM 2 animation
@@ -707,6 +833,10 @@ void F_Drawer (void)
 
     if (!finalestage)
 	F_TextWrite ();
+#ifdef __ANDROID__
+    else if (finalestage == 3)
+	F_StatsWrite ();
+#endif
     else
     {
 	switch (gameepisode)
