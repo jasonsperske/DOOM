@@ -1,3 +1,16 @@
 # Game data is not redistributable with the source
 *.wad
 *.WAD
+
+# Android / Gradle
+.gradle/
+build/
+local.properties
+.kotlin/
+.cxx/
+*.iml
+.idea/
+*.jks
+*.keystore
+*.apk
+captures/

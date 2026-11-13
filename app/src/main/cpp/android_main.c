@@ -25,7 +25,7 @@ extern boolean automapactive;
 extern int screenblocks;
 
 static JavaVM* g_vm;
-static jclass g_bridgeClass;   // dev.soloton.doom.DoomNative
+static jclass g_bridgeClass;   // dev.exerdoom.app.DoomNative
 static pthread_t g_gameThread;
 static int g_started;
 
@@ -291,7 +291,7 @@ static void* GameThread(void* unused)
 }
 
 // ---------------------------------------------------------------------------
-// JNI entry points: dev.soloton.doom.DoomNative
+// JNI entry points: dev.exerdoom.app.DoomNative
 
 jint JNI_OnLoad(JavaVM* vm, void* reserved)
 {
@@ -300,7 +300,7 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved)
     if ((*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6) != JNI_OK)
         return JNI_ERR;
     // Look the class up here: FindClass on the game thread sees only the system class loader.
-    jclass cls = (*env)->FindClass(env, "dev/soloton/doom/DoomNative");
+    jclass cls = (*env)->FindClass(env, "dev/exerdoom/app/DoomNative");
     if (!cls)
         return JNI_ERR;
     g_bridgeClass = (*env)->NewGlobalRef(env, cls);
@@ -316,7 +316,7 @@ static char* CopyJString(JNIEnv* env, jstring s)
 }
 
 JNIEXPORT jboolean JNICALL
-Java_dev_soloton_doom_DoomNative_nativeStart(JNIEnv* env, jclass cls,
+Java_dev_exerdoom_app_DoomNative_nativeStart(JNIEnv* env, jclass cls,
                                              jobjectArray args, jstring wadDir, jstring homeDir)
 {
     if (g_started)
@@ -347,25 +347,25 @@ Java_dev_soloton_doom_DoomNative_nativeStart(JNIEnv* env, jclass cls,
 }
 
 JNIEXPORT void JNICALL
-Java_dev_soloton_doom_DoomNative_nativeSetSurface(JNIEnv* env, jclass cls, jobject surface)
+Java_dev_exerdoom_app_DoomNative_nativeSetSurface(JNIEnv* env, jclass cls, jobject surface)
 {
     DA_SetWindow(surface ? ANativeWindow_fromSurface(env, surface) : NULL);
 }
 
 JNIEXPORT void JNICALL
-Java_dev_soloton_doom_DoomNative_nativeKey(JNIEnv* env, jclass cls, jint key, jboolean down)
+Java_dev_exerdoom_app_DoomNative_nativeKey(JNIEnv* env, jclass cls, jint key, jboolean down)
 {
     DA_PostKey(key, down);
 }
 
 JNIEXPORT void JNICALL
-Java_dev_soloton_doom_DoomNative_nativeMouse(JNIEnv* env, jclass cls, jint dx)
+Java_dev_exerdoom_app_DoomNative_nativeMouse(JNIEnv* env, jclass cls, jint dx)
 {
     DA_AddMouse(dx);
 }
 
 JNIEXPORT void JNICALL
-Java_dev_soloton_doom_DoomNative_nativeSetPaused(JNIEnv* env, jclass cls, jboolean paused)
+Java_dev_exerdoom_app_DoomNative_nativeSetPaused(JNIEnv* env, jclass cls, jboolean paused)
 {
     DA_SetPaused(paused);
 }
@@ -380,7 +380,7 @@ Java_dev_soloton_doom_DoomNative_nativeSetPaused(JNIEnv* env, jclass cls, jboole
 #define UI_STATUSBAR 64   // the status bar (with the face) is on screen
 
 JNIEXPORT jint JNICALL
-Java_dev_soloton_doom_DoomNative_nativeUiState(JNIEnv* env, jclass cls)
+Java_dev_exerdoom_app_DoomNative_nativeUiState(JNIEnv* env, jclass cls)
 {
     int state = 0;
     if (menuactive)
@@ -404,56 +404,56 @@ Java_dev_soloton_doom_DoomNative_nativeUiState(JNIEnv* env, jclass cls)
 // Ride mode
 
 JNIEXPORT void JNICALL
-Java_dev_soloton_doom_DoomNative_nativeSetRide(JNIEnv* env, jclass cls, jboolean enabled)
+Java_dev_exerdoom_app_DoomNative_nativeSetRide(JNIEnv* env, jclass cls, jboolean enabled)
 {
     RIDE_SetEnabled(enabled);
 }
 
 JNIEXPORT void JNICALL
-Java_dev_soloton_doom_DoomNative_nativeSetBike(JNIEnv* env, jclass cls,
+Java_dev_exerdoom_app_DoomNative_nativeSetBike(JNIEnv* env, jclass cls,
                                                jboolean live, jfloat pace, jfloat resistance)
 {
     RIDE_SetBike(live, pace, resistance);
 }
 
 JNIEXPORT void JNICALL
-Java_dev_soloton_doom_DoomNative_nativeRideTouch(JNIEnv* env, jclass cls, jboolean down, jfloat u, jfloat v)
+Java_dev_exerdoom_app_DoomNative_nativeRideTouch(JNIEnv* env, jclass cls, jboolean down, jfloat u, jfloat v)
 {
     RIDE_SetTouch(down, u, v);
 }
 
 JNIEXPORT jfloat JNICALL
-Java_dev_soloton_doom_DoomNative_nativePower(JNIEnv* env, jclass cls)
+Java_dev_exerdoom_app_DoomNative_nativePower(JNIEnv* env, jclass cls)
 {
     return RIDE_Power();
 }
 
 JNIEXPORT void JNICALL
-Java_dev_soloton_doom_DoomNative_nativeSetAutofireRpm(JNIEnv* env, jclass cls, jfloat rpm)
+Java_dev_exerdoom_app_DoomNative_nativeSetAutofireRpm(JNIEnv* env, jclass cls, jfloat rpm)
 {
     RIDE_SetAutofireRpm(rpm);
 }
 
 JNIEXPORT jfloat JNICALL
-Java_dev_soloton_doom_DoomNative_nativeAutofireRpm(JNIEnv* env, jclass cls)
+Java_dev_exerdoom_app_DoomNative_nativeAutofireRpm(JNIEnv* env, jclass cls)
 {
     return RIDE_AutofireRpm();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_dev_soloton_doom_DoomNative_nativeAutofiring(JNIEnv* env, jclass cls)
+Java_dev_exerdoom_app_DoomNative_nativeAutofiring(JNIEnv* env, jclass cls)
 {
     return RIDE_Autofiring();
 }
 
 JNIEXPORT jint JNICALL
-Java_dev_soloton_doom_DoomNative_nativeRideObjective(JNIEnv* env, jclass cls)
+Java_dev_exerdoom_app_DoomNative_nativeRideObjective(JNIEnv* env, jclass cls)
 {
     return RIDE_Objective();
 }
 
 JNIEXPORT jint JNICALL
-Java_dev_soloton_doom_DoomNative_nativeRideWeapon(JNIEnv* env, jclass cls)
+Java_dev_exerdoom_app_DoomNative_nativeRideWeapon(JNIEnv* env, jclass cls)
 {
     return RIDE_Weapon();
 }

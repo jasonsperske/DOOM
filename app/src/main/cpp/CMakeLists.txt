@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 project(doom C)
 
 # The original 1997 engine, built unchanged apart from portability fixes.
-set(DOOM_SRC ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../linuxdoom-1.10)
+set(DOOM_SRC ${CMAKE_CURRENT_SOURCE_DIR}/../../../../linuxdoom-1.10)
 
 file(GLOB ENGINE_SOURCES ${DOOM_SRC}/*.c)
 # Linux/X11 platform layer: replaced by the Android files below.

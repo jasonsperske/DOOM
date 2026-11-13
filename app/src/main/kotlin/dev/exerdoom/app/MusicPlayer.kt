@@ -1,4 +1,4 @@
-package dev.soloton.doom
+package dev.exerdoom.app
 
 import android.media.MediaPlayer
 import android.os.Handler
